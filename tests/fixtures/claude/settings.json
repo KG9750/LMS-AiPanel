@@ -1,0 +1,9 @@
+{
+  "apiKeyHelper": "/usr/bin/security find-generic-password -w -s claude",
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://api.example.test/anthropic",
+    "ANTHROPIC_MODEL": "example-model",
+    "ANTHROPIC_API_KEY": "placeholder-value"
+  },
+  "model": "example-model"
+}

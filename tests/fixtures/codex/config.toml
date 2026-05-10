@@ -1,0 +1,7 @@
+model = "gpt-test"
+model_provider = "openai_http"
+
+[mcp_servers.example]
+command = "node"
+args = ["server.js"]
+
