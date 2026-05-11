@@ -121,6 +121,7 @@ button {
   min-height: 34px;
   padding: 0 12px;
   border-radius: 7px;
+  cursor: pointer;
 }
 
 .localhost {
@@ -131,6 +132,106 @@ button {
   padding: 6px 10px;
   font-size: 13px;
   font-weight: 700;
+}
+
+.explain {
+  position: relative;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  outline: 0;
+  cursor: help;
+}
+
+.explain-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: inherit;
+  white-space: inherit;
+}
+
+.explain::after {
+  content: "?";
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  margin-left: 5px;
+  border-radius: 999px;
+  background: #e7eef4;
+  color: #4c6072;
+  display: inline-grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.metric .explain::after,
+.panel-head .explain::after,
+.row.header .explain::after {
+  opacity: 0.9;
+}
+
+.status.explain::after,
+.map-node .explain::after,
+.drift .explain::after,
+.adapter-run .explain::after,
+.localhost.explain::after {
+  display: none;
+}
+
+.tooltip {
+  display: none;
+  position: absolute;
+  z-index: 30;
+  left: 0;
+  bottom: calc(100% + 10px);
+  width: max-content;
+  max-width: min(360px, 82vw);
+  padding: 10px 12px;
+  border: 1px solid #bfd0de;
+  border-radius: 8px;
+  background: #14202b;
+  color: #f7fbff;
+  box-shadow: 0 12px 28px rgba(20, 32, 43, 0.18);
+  font-size: 12px;
+  line-height: 1.55;
+  font-weight: 500;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+.content-grid .panel:nth-child(2n) .tooltip,
+.top-actions .tooltip,
+.adapter-run .tooltip {
+  left: auto;
+  right: 0;
+}
+
+.top-actions .tooltip {
+  top: calc(100% + 10px);
+  bottom: auto;
+}
+
+.explain:hover .tooltip,
+.explain:focus-visible .tooltip {
+  display: block;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.explain:focus-visible {
+  border-radius: 6px;
+  box-shadow: 0 0 0 3px rgba(14, 102, 91, 0.18);
 }
 
 .metrics {
@@ -147,8 +248,8 @@ button {
   padding: 14px;
 }
 
-.metric span {
-  display: block;
+.metric > .explain {
+  display: inline-flex;
   color: #667789;
   font-size: 13px;
   margin-bottom: 8px;
@@ -179,7 +280,7 @@ button {
   border: 1px solid #dbe3ea;
   border-radius: 8px;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .panel-head {
@@ -195,9 +296,11 @@ button {
 .panel-head h2 {
   font-size: 15px;
   margin: 0;
+  min-width: 0;
 }
 
-.panel-head span {
+.panel-head > span,
+.panel-head > .explain {
   color: #718091;
   font-size: 13px;
 }
@@ -214,6 +317,11 @@ button {
   gap: 10px;
   padding: 0 14px;
   border-bottom: 1px solid #edf1f5;
+}
+
+.row > span,
+.row > .explain {
+  min-width: 0;
 }
 
 .row.header {
@@ -286,6 +394,12 @@ button {
   line-height: 1.2;
 }
 
+.map-node strong,
+.map-node small {
+  display: inline-flex;
+  width: 100%;
+}
+
 .map-node small {
   color: #718091;
 }
@@ -332,6 +446,12 @@ button {
   align-items: center;
 }
 
+.adapter-run > .explain:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .empty {
   margin: 0;
   padding: 16px;
@@ -347,17 +467,50 @@ button {
     display: none;
   }
 
+  .main {
+    padding: 20px 14px 28px;
+  }
+
+  .topbar {
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .top-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .top-actions button,
+  .localhost {
+    white-space: nowrap;
+  }
+
   .metrics,
   .content-grid {
     grid-template-columns: 1fr;
   }
 
   .row {
-    grid-template-columns: minmax(180px, 1fr) 90px 90px;
+    grid-template-columns: minmax(0, 1fr) 82px 72px;
+    gap: 8px;
+    padding: 0 10px;
   }
 
-  .row span:last-child {
+  .status {
+    min-width: 58px;
+  }
+
+  .row > :last-child {
     display: none;
   }
-}
 
+  .tooltip {
+    position: fixed;
+    left: 14px;
+    right: 14px;
+    bottom: 16px;
+    width: auto;
+    max-width: none;
+  }
+}
