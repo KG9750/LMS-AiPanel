@@ -270,6 +270,16 @@ export const registryMergeSchema = z.object({
   evidence: z.array(z.string()).default([])
 });
 
+export const metricSampleInputSchema = z.object({
+  scope: z.string().min(1),
+  layer: z.enum(["provider", "client", "endpoint", "model", "runtime", "process"]),
+  metric: z.string().min(1),
+  source: z.string().min(1),
+  coverage: z.string().min(1),
+  kind: z.enum(["counter", "gauge"]),
+  value: z.number()
+});
+
 export type RegistryKind = z.infer<typeof registryKindSchema>;
 export type RegistryEntry = z.infer<typeof registryEntrySchema>;
 export type MergeStatus = z.infer<typeof mergeStatusSchema>;

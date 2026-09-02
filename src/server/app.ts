@@ -14,13 +14,14 @@ import { createAdapters } from "../adapters";
 import { AdapterRuntime } from "../adapters/runtime";
 import { resolveCapabilityStates, type StackAdapter } from "../adapters/types";
 import { fail, ok } from "../shared/api";
-import { adapterManifestSchema, registryEntrySchema, type ApiEnvelope, type HostRecord, type RegistryEntry, type SystemSnapshot } from "../shared/schemas";
+import { adapterManifestSchema, metricSampleInputSchema, registryEntrySchema, type ApiEnvelope, type HostRecord, type RegistryEntry, type SystemSnapshot } from "../shared/schemas";
 import { ensureStorage, type InitializedStorage } from "../storage/init";
 import { getAppPaths } from "../storage/paths";
 import { getOrCreateHost } from "../storage/host";
 import { RegistryRepository } from "../storage/registry";
 import { SnapshotStore } from "../storage/snapshots";
 import { RefreshRunStore } from "../storage/refreshRuns";
+import { MetricStore, type MetricLayer } from "../storage/metrics";
 import { closeDatabase } from "../storage/db";
 
 export interface AppOptions {
@@ -93,6 +94,7 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
   const refreshStore = new RefreshRunStore(storage.db);
   const sseHub = new SseHub();
   const refresher = new RefreshOrchestrator(refreshStore, scheduler, sseHub, host.hostId);
+  const metrics = new MetricStore(storage.db);
 
   const auditLog: Array<Record<string, unknown>> = [];
   const appPaths = getAppPaths();
@@ -239,6 +241,46 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
       unsubscribe();
     });
     return reply;
+  });
+
+  // ---- Token / memory time series with counter epochs (issue #11) ----
+
+  /** Record one metric sample (gateway / adapters call this). */
+  app.post<{
+    Body: {
+      scope: string;
+      layer: string;
+      metric: string;
+      source: string;
+      coverage: string;
+      kind: "counter" | "gauge";
+      value: number;
+    };
+  }>("/api/metrics", async (request) => {
+    const parsed = metricSampleInputSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return envelope(
+        fail({
+          code: "INVALID_METRIC_SAMPLE",
+          message: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")
+        })
+      );
+    }
+    metrics.record({ hostId: host.hostId, sampleAt: new Date().toISOString(), ...parsed.data });
+    return envelope(ok({ recorded: true }));
+  });
+
+  /** Current values and window deltas for a scope/metric. */
+  app.get<{
+    Querystring: { scope?: string; metric?: string; layer?: string; window?: string };
+  }>("/api/metrics/series", async (request) => {
+    const layer = (request.query.layer ?? "endpoint") as MetricLayer;
+    const windowSeconds = Math.min(Number(request.query.window ?? 3600), 7 * 24 * 3600);
+    if (!request.query.scope || !request.query.metric) {
+      return envelope(ok({ scopes: metrics.listScopes(host.hostId) }));
+    }
+    const series = metrics.series(host.hostId, request.query.scope, request.query.metric, layer, windowSeconds);
+    return envelope(ok(series));
   });
 
   // ---- Managed Resource Registry (issue #3) ----
