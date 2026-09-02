@@ -1,6 +1,14 @@
 import { z } from "zod";
 
-export const GRAPH_SCHEMA_VERSION = 1;
+export const GRAPH_SCHEMA_VERSION = 2;
+
+export const hostRecordSchema = z.object({
+  hostId: z.string().min(1),
+  hostName: z.string().min(1),
+  scope: z.literal("local"),
+  createdAt: z.string().datetime(),
+  lastSeenAt: z.string().datetime()
+});
 
 export const resourceTypeSchema = z.enum([
   "tool",
@@ -45,6 +53,7 @@ export const resourceNodeSchema = z.object({
   label: z.string().min(1),
   state: resourceStateSchema,
   sourceAdapter: z.string().min(1),
+  hostId: z.string().min(1),
   properties: jsonRecordSchema.default({}),
   lastSeenAt: z.string().datetime(),
   graphSchemaVersion: z.literal(GRAPH_SCHEMA_VERSION)
@@ -137,10 +146,13 @@ export const apiErrorSchema = z.object({
 export const apiMetaSchema = z.object({
   timestamp: z.string().datetime(),
   requestId: z.string().optional(),
-  adapterId: z.string().optional()
+  adapterId: z.string().optional(),
+  hostId: z.string().optional()
 });
 
 export const systemSnapshotSchema = z.object({
+  version: z.number().int().positive(),
+  host: hostRecordSchema,
   nodes: z.array(resourceNodeSchema),
   edges: z.array(resourceEdgeSchema),
   adapterRuns: z.array(adapterRunSchema),
@@ -160,6 +172,7 @@ export type DriftRecord = z.infer<typeof driftRecordSchema>;
 export type ActionPlan = z.infer<typeof actionPlanSchema>;
 export type ApiError = z.infer<typeof apiErrorSchema>;
 export type ApiMeta = z.infer<typeof apiMetaSchema>;
+export type HostRecord = z.infer<typeof hostRecordSchema>;
 export type SystemSnapshot = z.infer<typeof systemSnapshotSchema>;
 
 export type ApiEnvelope<T> =

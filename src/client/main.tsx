@@ -10,6 +10,7 @@ import type {
   ResourceType,
   SystemSnapshot
 } from "../shared/schemas";
+import { HostBadge, type HostInfo } from "./hostBadge";
 import "./styles.css";
 
 const queryClient = new QueryClient();
@@ -220,6 +221,19 @@ function App() {
   const totals = summarize(snapshot);
   const driftPriority = snapshot.driftRecords.slice(0, 8);
 
+  const { data: hostInfo } = useQuery({
+    queryKey: ["host"],
+    queryFn: async (): Promise<HostInfo> => {
+      const response = await fetch("/api/host");
+      const envelope = (await response.json()) as ApiEnvelope<HostInfo>;
+      if (!envelope.ok) {
+        throw new Error(envelope.error.message);
+      }
+      return envelope.data;
+    },
+    staleTime: 60_000
+  });
+
   return (
     <div className="app">
       <aside className="sidebar">
@@ -239,6 +253,7 @@ function App() {
             <p>仅本机访问的 AI 工作栈控制面板</p>
           </div>
           <div className="top-actions">
+            <HostBadge info={hostInfo} />
             <Explain
               as="span"
               className="localhost"

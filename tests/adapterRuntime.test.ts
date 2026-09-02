@@ -17,6 +17,7 @@ describe("AdapterRuntime", () => {
               label: "Good Tool",
               state: "ok",
               sourceAdapter: "good",
+              hostId: "pending",
               properties: {},
               lastSeenAt: new Date().toISOString(),
               graphSchemaVersion: GRAPH_SCHEMA_VERSION

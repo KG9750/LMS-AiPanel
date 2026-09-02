@@ -1,6 +1,7 @@
 import { nanoid } from "nanoid";
 import type { AdapterResult, AdapterRun } from "../shared/schemas";
 import { adapterResultSchema } from "../shared/schemas";
+import { stampHostId } from "../domain/scope";
 import type { AdapterRuntimeResult, StackAdapter } from "./types";
 
 const EMPTY_RESULT: AdapterResult = {
@@ -16,14 +17,18 @@ export class AdapterRuntime {
 
   constructor(
     private readonly adapters: StackAdapter[],
-    private readonly timeoutMs = 5_000
+    private readonly timeoutMs = 5_000,
+    private readonly hostId = "pending"
   ) {}
 
   async collectAll(): Promise<AdapterRuntimeResult> {
     const results = await Promise.all(this.adapters.map((adapter) => this.runAdapter(adapter)));
     return {
       result: {
-        nodes: results.flatMap((item) => item.result.nodes),
+        nodes: stampHostId(
+          results.flatMap((item) => item.result.nodes),
+          this.hostId
+        ),
         edges: results.flatMap((item) => item.result.edges),
         redactionHints: results.flatMap((item) => item.result.redactionHints)
       },

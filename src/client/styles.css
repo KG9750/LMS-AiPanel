@@ -134,6 +134,40 @@ button {
   font-weight: 700;
 }
 
+.host-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #cdd8e2;
+  background: #f4f7fa;
+  color: #2b3b4c;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: help;
+  white-space: nowrap;
+}
+
+.host-badge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #2e9e6b;
+  box-shadow: 0 0 0 3px rgba(46, 158, 107, 0.18);
+}
+
+.host-badge-scope {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: #e2e9f0;
+  color: #4a5b6c;
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
 .explain {
   position: relative;
   min-width: 0;

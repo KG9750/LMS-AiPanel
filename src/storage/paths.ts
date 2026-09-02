@@ -7,6 +7,7 @@ export interface AppPaths {
   backups: string;
   logs: string;
   databasePath: string;
+  migrationsDir: string;
 }
 
 export function getAppPaths(): AppPaths {
@@ -21,7 +22,7 @@ export function getAppPaths(): AppPaths {
     storage: path.join(root, "storage"),
     backups: path.join(root, "backups"),
     logs: path.join(root, "logs"),
-    databasePath: path.join(root, "storage", "lms-aipanel.sqlite")
+    databasePath: path.join(root, "storage", "lms-aipanel.sqlite"),
+    migrationsDir: path.join(process.cwd(), "migrations")
   };
 }
-

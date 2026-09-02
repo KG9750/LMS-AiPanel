@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { GRAPH_SCHEMA_VERSION, type EdgeRelation, type ResourceEdge, type ResourceNode, type ResourceState, type ResourceType } from "../shared/schemas";
+import { UNSTAMPED_HOST_ID } from "../domain/scope";
 import { edgeId, resourceId, stableHash } from "../domain/ids";
 
 export function homePath(...parts: string[]): string {
@@ -40,6 +41,7 @@ export function node(
     label,
     state,
     sourceAdapter: adapter,
+    hostId: UNSTAMPED_HOST_ID,
     properties,
     lastSeenAt: new Date().toISOString(),
     graphSchemaVersion: GRAPH_SCHEMA_VERSION

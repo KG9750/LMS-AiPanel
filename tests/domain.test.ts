@@ -39,6 +39,7 @@ describe("drift engine", () => {
       label: "test",
       state: "stopped",
       sourceAdapter: "launchagent",
+      hostId: "pending",
       properties: {
         evidence: ["launchctl loaded=false"]
       },
