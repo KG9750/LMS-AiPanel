@@ -2,6 +2,8 @@
 
 LMS-AiPanel is localhost-only, but local access is not treated as a substitute for safety.
 
+Non-loopback binding is rejected unless both `LMS_AIPANEL_HOST` and `LMS_AIPANEL_ALLOW_REMOTE=1` are set. Remote access is outside the supported MVP security boundary.
+
 ## Baselines
 
 - Bind to `127.0.0.1`.
@@ -35,3 +37,4 @@ Configuration writes are deferred until the Config Center milestone. They must u
 - backup metadata
 - audit event
 
+Adapter results pass through the platform redaction service before caching, persistence, or API responses. Open WebUI metadata uses an allowlist and never publishes the raw metadata field. Runtime databases, logs, backups, and environment files remain outside the repository.

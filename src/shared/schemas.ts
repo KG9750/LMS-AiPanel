@@ -114,6 +114,13 @@ export const driftRecordSchema = z.object({
 
 export const actionTypeSchema = z.enum(["read", "dry-run", "configure"]);
 
+export const actionPlanRequestSchema = z
+  .object({
+    resourceId: z.string().min(1),
+    action: actionTypeSchema
+  })
+  .strict();
+
 export const actionPlanSchema = z.object({
   actionId: z.string().min(1),
   resourceId: z.string().min(1),
@@ -158,6 +165,7 @@ export type RedactionHint = z.infer<typeof redactionHintSchema>;
 export type AdapterResult = z.infer<typeof adapterResultSchema>;
 export type DriftRecord = z.infer<typeof driftRecordSchema>;
 export type ActionPlan = z.infer<typeof actionPlanSchema>;
+export type ActionPlanRequest = z.infer<typeof actionPlanRequestSchema>;
 export type ApiError = z.infer<typeof apiErrorSchema>;
 export type ApiMeta = z.infer<typeof apiMetaSchema>;
 export type SystemSnapshot = z.infer<typeof systemSnapshotSchema>;
@@ -166,3 +174,125 @@ export type ApiEnvelope<T> =
   | { ok: true; data: T; meta: ApiMeta }
   | { ok: false; error: ApiError; meta: ApiMeta };
 
+export type SkillManagerPlatform = "codex" | "claude";
+export type SkillManagerScope = "user" | "project";
+export type SkillManagerStatus =
+  | "enabled"
+  | "disabled"
+  | "readonly"
+  | "manual_restore_candidate"
+  | "conflict_disabled_duplicate";
+export type SkillManagerValidationState = "OK" | "WARN" | "ERROR" | "UNKNOWN";
+
+export interface SkillManagerIssue {
+  severity: "INFO" | "WARN" | "ERROR" | "UNKNOWN";
+  code: string;
+  message: string;
+  paths?: string[];
+}
+
+export interface SkillManagerSkill {
+  id: string;
+  name: string;
+  description: string;
+  platform: SkillManagerPlatform;
+  scope: SkillManagerScope;
+  status: SkillManagerStatus;
+  validationState: SkillManagerValidationState;
+  issues: SkillManagerIssue[];
+  skillMdPath: string;
+  updatedAt: string | null;
+}
+
+export interface SkillManagerSummary {
+  total: number;
+  byPlatform: Record<SkillManagerPlatform, number>;
+  byScope: Record<SkillManagerScope, number>;
+  byStatus: Record<SkillManagerStatus, number>;
+  byValidation: Record<SkillManagerValidationState, number>;
+}
+
+export interface SkillManagerPanelStatus {
+  running: boolean;
+  port: number;
+  portOccupied: boolean;
+  identityVerified: boolean;
+  url: string | null;
+  accessMessage: string;
+  readonlyCommand: string;
+}
+
+export interface SkillManagerModuleSnapshot {
+  configured: boolean;
+  available: boolean;
+  projectPath: string;
+  cliPath: string;
+  scannedAt: string;
+  summary: SkillManagerSummary;
+  skills: SkillManagerSkill[];
+  rootWarnings: SkillManagerIssue[];
+  recentSkills: SkillManagerSkill[];
+  panel: SkillManagerPanelStatus;
+  error?: string;
+}
+
+const skillManagerIssueSchema = z.object({
+  severity: z.enum(["INFO", "WARN", "ERROR", "UNKNOWN"]),
+  code: z.string().min(1),
+  message: z.string().min(1),
+  paths: z.array(z.string()).optional()
+});
+
+const skillManagerSkillSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string(),
+  platform: z.enum(["codex", "claude"]),
+  scope: z.enum(["user", "project"]),
+  status: z.enum(["enabled", "disabled", "readonly", "manual_restore_candidate", "conflict_disabled_duplicate"]),
+  validationState: z.enum(["OK", "WARN", "ERROR", "UNKNOWN"]),
+  issues: z.array(skillManagerIssueSchema),
+  skillMdPath: z.string(),
+  updatedAt: z.string().nullable()
+});
+
+const skillManagerSummarySchema = z.object({
+  total: z.number().int().nonnegative(),
+  byPlatform: z.object({ codex: z.number().int().nonnegative(), claude: z.number().int().nonnegative() }),
+  byScope: z.object({ user: z.number().int().nonnegative(), project: z.number().int().nonnegative() }),
+  byStatus: z.object({
+    enabled: z.number().int().nonnegative(),
+    disabled: z.number().int().nonnegative(),
+    readonly: z.number().int().nonnegative(),
+    manual_restore_candidate: z.number().int().nonnegative(),
+    conflict_disabled_duplicate: z.number().int().nonnegative()
+  }),
+  byValidation: z.object({
+    OK: z.number().int().nonnegative(),
+    WARN: z.number().int().nonnegative(),
+    ERROR: z.number().int().nonnegative(),
+    UNKNOWN: z.number().int().nonnegative()
+  })
+});
+
+export const skillManagerModuleSnapshotSchema = z.object({
+  configured: z.boolean(),
+  available: z.boolean(),
+  projectPath: z.string(),
+  cliPath: z.string(),
+  scannedAt: z.string().datetime(),
+  summary: skillManagerSummarySchema,
+  skills: z.array(skillManagerSkillSchema),
+  rootWarnings: z.array(skillManagerIssueSchema),
+  recentSkills: z.array(skillManagerSkillSchema),
+  panel: z.object({
+    running: z.boolean(),
+    port: z.number().int().min(1).max(65_535),
+    portOccupied: z.boolean(),
+    identityVerified: z.boolean(),
+    url: z.string().url().nullable(),
+    accessMessage: z.string().min(1),
+    readonlyCommand: z.string()
+  }),
+  error: z.string().optional()
+});

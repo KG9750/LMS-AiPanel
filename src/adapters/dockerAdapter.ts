@@ -26,7 +26,8 @@ export class DockerAdapter implements StackAdapter {
 
     try {
       const { stdout } = await execa("docker", ["ps", "--all", "--format", "{{json .}}"], {
-        timeout: context.timeoutMs
+        timeout: context.timeoutMs,
+        cancelSignal: context.signal
       });
       root.state = "running";
       const rows = stdout
@@ -68,4 +69,3 @@ export class DockerAdapter implements StackAdapter {
     };
   }
 }
-

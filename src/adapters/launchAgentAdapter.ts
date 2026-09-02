@@ -27,7 +27,10 @@ export class LaunchAgentAdapter implements StackAdapter {
     const dir = homePath("Library", "LaunchAgents");
     let launchctl = "";
     try {
-      launchctl = (await execa("launchctl", ["list"], { timeout: context.timeoutMs })).stdout;
+      launchctl = (await execa("launchctl", ["list"], {
+        timeout: context.timeoutMs,
+        cancelSignal: context.signal
+      })).stdout;
     } catch {
       launchctl = "";
     }
@@ -42,8 +45,13 @@ export class LaunchAgentAdapter implements StackAdapter {
         const raw = await fs.readFile(filePath, "utf8");
         const parsed = plist.parse(raw) as LaunchAgentPlist;
         const label = parsed.Label ?? entry.replace(/\.plist$/, "");
-        const loaded = launchctl.includes(label);
-        const launchNode = node(this.id, "runtime", label, label, loaded ? "running" : "stopped", {
+        const loaded = launchctl
+          .split("\n")
+          .some((line) => line.trim().split(/\s+/).at(-1) === label);
+        const resourceType = /openclaw|hermes/i.test(label) ? "assistant" : "runtime";
+        const launchNode = node(this.id, resourceType, label, label, loaded ? "running" : "stopped", {
+          configured: true,
+          loaded,
           runAtLoad: Boolean(parsed.RunAtLoad),
           program: parsed.ProgramArguments?.[0],
           argCount: parsed.ProgramArguments?.length ?? 0,

@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { GRAPH_SCHEMA_VERSION, type EdgeRelation, type ResourceEdge, type ResourceNode, type ResourceState, type ResourceType } from "../shared/schemas";
-import { edgeId, resourceId, stableHash } from "../domain/ids";
+import { edgeId, resourceId, stableKey } from "../domain/ids";
 
 export function homePath(...parts: string[]): string {
   return path.join(os.homedir(), ...parts);
@@ -63,10 +63,9 @@ export function edge(
 }
 
 export function pathKey(filePath: string): string {
-  return `path-${stableHash(filePath)}`;
+  return `path-${stableKey(filePath.replace(homePath(), "~"))}`;
 }
 
 export function safeBaseName(filePath: string): string {
   return path.basename(filePath);
 }
-

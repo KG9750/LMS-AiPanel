@@ -10,6 +10,8 @@ export class CodexConfigAdapter implements StackAdapter {
   name = "Codex";
   private lastError: string | undefined;
 
+  constructor(private readonly configRoot = homePath(".codex")) {}
+
   async collect(_context: AdapterContext): Promise<AdapterResult> {
     const tool = node(this.id, "tool", "codex-desktop", "Codex", "ok", {
       evidence: ["~/.codex configuration scan"]
@@ -17,8 +19,8 @@ export class CodexConfigAdapter implements StackAdapter {
     const nodes = [tool];
     const edges = [];
 
-    const configPath = homePath(".codex", "config.toml");
-    const agentsPath = homePath(".codex", "AGENTS.md");
+    const configPath = path.join(this.configRoot, "config.toml");
+    const agentsPath = path.join(this.configRoot, "AGENTS.md");
     for (const file of [configPath, agentsPath]) {
       const exists = await pathExists(file);
       const configNode = node(this.id, "config", path.basename(file), path.basename(file), exists ? "ok" : "unknown", {
@@ -65,4 +67,3 @@ export class CodexConfigAdapter implements StackAdapter {
     };
   }
 }
-
