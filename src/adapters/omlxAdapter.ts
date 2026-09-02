@@ -67,8 +67,8 @@ export class OmlxAdapter implements StackAdapter {
 
   async collect(context: AdapterContext): Promise<AdapterResult> {
     const nodes: ResourceNode[] = [];
-    const edges = [];
-    const redactionHints = [];
+    const edges: Array<ReturnType<typeof edge>> = [];
+    const redactionHints: Array<{ resourceId?: string; path: string[]; reason: string }> = [];
 
     const runtimeId = `omlx:runtime:server`;
     const endpointId = `omlx:endpoint:${new URL(this.endpointBase).port || DEFAULT_PORT}`;

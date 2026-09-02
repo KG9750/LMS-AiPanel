@@ -82,7 +82,7 @@ describe("oMLX adapter", () => {
     const instance = result.nodes.find((n) => n.id === "omlx:model:instance:llama-3-8b")!;
     expect(instance.state).toBe("running");
     expect(instance.properties.memoryLevel).toBe("model");
-    expect(instance.properties.evidence.some((e: string) => e.includes("listed in /v1/models"))).toBe(true);
+    expect((instance.properties.evidence as string[]).some((e: string) => e.includes("listed in /v1/models"))).toBe(true);
   });
 
   it("stopped runtime: no process and unreachable endpoint stay distinct and read-only", async () => {
