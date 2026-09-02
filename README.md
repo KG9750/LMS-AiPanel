@@ -10,12 +10,12 @@ This repository contains the first runnable foundation:
 - Fastify API with a uniform envelope
 - Resource Graph schemas
 - Adapter Runtime with cancellation, single-flight refresh, stale fallback, and failure isolation
-- Read-only adapters for Claude, Codex, Docker, Open WebUI, LaunchAgents, local models, skills, and MCP config candidates
+- Read-only adapters for Claude, Codex, Docker, Open WebUI, oMLX telemetry, LaunchAgents, local models, skills, and MCP config candidates
 - Drift detection for configured-vs-live MVP signals
 - Action execution disabled by default; action planning only
 - SQLite persistence for redacted snapshots and audit entries
 - Chinese resource filters and detailed hover descriptions
-- Per-model local token usage totals from Open WebUI history, without reading chat content
+- Provider-level local token totals from oMLX, plus separate client-level details from Open WebUI history
 
 ## Run
 
@@ -49,6 +49,7 @@ Optional path-delimited discovery overrides:
 LMS_AIPANEL_MODEL_ROOTS
 LMS_AIPANEL_SKILL_ROOTS
 LMS_AIPANEL_MCP_CONFIGS
+LMS_AIPANEL_OMLX_DATA_ROOTS
 ```
 
 ## Runtime Data

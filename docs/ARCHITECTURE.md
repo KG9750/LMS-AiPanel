@@ -84,4 +84,9 @@ The MVP keeps static adapter registration while centralizing built-in paths in a
 
 ## Local Model Token Usage
 
-The Open WebUI adapter aggregates `input_tokens`, `output_tokens`, `total_tokens`, request count, and latest usage time by `model_id` from `chat_message.usage`. It never reads chat content for this feature. Missing usage data is represented as unavailable rather than zero, and older Open WebUI schemas degrade only the usage panel while preserving model discovery.
+Token telemetry has two independent layers:
+
+- **Provider telemetry** is the endpoint-wide source of truth. The oMLX adapter reads cumulative prompt, completion, cached-token, and request counters from each instance's `stats.json`. Every request that reaches that oMLX endpoint is included, whether it comes from Waku, a headless CLI, a script, Open WebUI, or another client. Cumulative endpoint counters cannot identify which client made each request.
+- **Client telemetry** is a partial client-side view. The Open WebUI adapter aggregates `input_tokens`, `output_tokens`, `total_tokens`, request count, and latest usage time by `model_id` from `chat_message.usage`. It never reads chat content for this feature.
+
+Provider and client values may describe the same requests, so the UI presents them separately and never adds them together. Missing telemetry is unavailable rather than zero. A runtime without provider-side counters cannot provide complete historical usage; full future coverage requires provider instrumentation or routing local inference through a shared observability gateway.

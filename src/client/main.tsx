@@ -363,39 +363,49 @@ function App() {
             <div className="panel token-panel">
               <div className="panel-head">
                 <h2>
-                  <Explain description="按本地模型汇总 Open WebUI 已保存的真实 usage 数据。统计只读取 model_id、usage 数字和调用时间，不读取聊天正文。">
-                    本地模型 Token 统计
+                  <Explain description="同时展示推理服务端和客户端的本地模型 Token 遥测。服务端统计覆盖命中该 endpoint 的 Waku、headless CLI、脚本和其他客户端；客户端统计仅表示该客户端自己保存的记录。">
+                    本地模型 Token 遥测
                   </Explain>
                 </h2>
-                <Explain as="span" description="有可用 usage 记录的模型数量。没有记录的模型不会按 0 计算，以免把“没有数据”误解为“从未调用”。">
-                  {tokenStats.models.length} 个模型有记录
+                <Explain as="span" description="服务端与客户端统计可能包含同一次调用，因此两个层级不能直接相加。没有遥测记录的模型不会按 0 计算。">
+                  {tokenStats.provider.models.length} 个服务端 · {tokenStats.client.models.length} 个客户端
                 </Explain>
               </div>
-              <div className="token-summary">
-                <TokenMetric label="输入 Token" value={tokenStats.inputTokens} description="发送给模型的 token 总数，包括用户输入、系统提示和进入上下文的历史内容。来源是 Open WebUI usage 中的 input_tokens、prompt_tokens 或 prompt_n。" />
-                <TokenMetric label="输出 Token" value={tokenStats.outputTokens} description="模型生成的 token 总数。来源是 Open WebUI usage 中的 output_tokens、completion_tokens 或 predicted_n。" />
-                <TokenMetric label="总 Token" value={tokenStats.totalTokens} description="输入 Token 与输出 Token 的合计。若调用记录提供 total_tokens 则优先使用该值，否则由输入和输出相加。" />
-                <TokenMetric label="调用次数" value={tokenStats.requestCount} description="带有有效 usage 对象的本地模型调用记录数量。没有 usage 的聊天消息不会计入。" />
+              <div className="telemetry-groups">
+                <TelemetrySummary
+                  title="推理服务端 · 全客户端覆盖"
+                  description="来自 oMLX 等本地推理服务自身的累计统计。只要请求命中该服务 endpoint，无论调用方是 Waku、headless CLI、脚本还是 Open WebUI，都会计入。"
+                  summary={tokenStats.provider}
+                />
+                <TelemetrySummary
+                  title="客户端记录 · 局部覆盖"
+                  description="来自 Open WebUI 等客户端保存的 usage。它用于查看客户端侧明细，可能与服务端统计重叠，不应和服务端数字相加。"
+                  summary={tokenStats.client}
+                />
               </div>
               {tokenStats.models.length === 0 ? (
                 <p className="empty">当前没有可用的本地模型 Token usage 记录。</p>
               ) : (
                 <div className="token-table">
                   <div className="token-row token-header">
-                    <Explain as="span" description="Open WebUI 调用记录中的模型标识所对应的本地模型名称。">模型</Explain>
+                    <Explain as="span" description="遥测数据所对应的本地模型名称。">模型</Explain>
+                    <Explain as="span" description="服务端表示覆盖命中该 endpoint 的所有客户端；客户端表示只覆盖该客户端自己的记录。">层级</Explain>
                     <Explain as="span" description="该模型累计接收的输入 token。">输入</Explain>
                     <Explain as="span" description="该模型累计生成的输出 token。">输出</Explain>
+                    <Explain as="span" description="输入 token 中由推理服务复用缓存的累计数量。缓存 token 通常仍包含在输入 token 中。">缓存</Explain>
                     <Explain as="span" description="该模型输入与输出 token 的累计总量。">总计</Explain>
                     <Explain as="span" description="该模型具有有效 usage 数据的调用次数。">调用</Explain>
                     <Explain as="span" description="该模型最近一条有效 usage 调用记录的本机时间。">最近调用</Explain>
                   </div>
                   {tokenStats.models.map((model) => (
                     <div className="token-row" key={model.resourceId}>
-                      <Explain as="span" className="truncate" description={`${model.label} 的统计来自 Open WebUI chat_message.usage，不包含聊天正文。`}>
+                      <Explain as="span" className="truncate" description={describeTokenCoverage(model)}>
                         {model.label}
                       </Explain>
+                      <span className={`telemetry-layer ${model.telemetryLayer}`}>{model.telemetryLayer === "provider" ? "服务端" : "客户端"}</span>
                       <span>{formatTokenCount(model.inputTokens)}</span>
                       <span>{formatTokenCount(model.outputTokens)}</span>
+                      <span>{formatTokenCount(model.cachedTokens)}</span>
                       <strong>{formatTokenCount(model.totalTokens)}</strong>
                       <span>{formatTokenCount(model.requestCount)}</span>
                       <span>{formatDate(model.lastUsedAt)}</span>
@@ -493,6 +503,29 @@ function TokenMetric({ label, value, description }: { label: string; value: numb
       <Explain as="span" description={description}>{label}</Explain>
       <strong>{formatTokenCount(value)}</strong>
     </div>
+  );
+}
+
+function TelemetrySummary({
+  title,
+  description,
+  summary
+}: {
+  title: string;
+  description: string;
+  summary: TokenUsageSummary;
+}) {
+  return (
+    <section className="telemetry-group">
+      <h3><Explain description={description}>{title}</Explain></h3>
+      <div className="token-summary">
+        <TokenMetric label="输入 Token" value={summary.inputTokens} description={`${description} 输入 Token 包括提示词、系统消息和进入上下文的历史内容。`} />
+        <TokenMetric label="输出 Token" value={summary.outputTokens} description={`${description} 输出 Token 是模型实际生成的累计数量。`} />
+        <TokenMetric label="缓存 Token" value={summary.cachedTokens} description={`${description} 缓存 Token 通常已经包含在输入 Token 中，不应再次加到总 Token。`} />
+        <TokenMetric label="总 Token" value={summary.totalTokens} description={`${description} 总 Token 等于输入与输出 Token 的合计。`} />
+        <TokenMetric label="调用次数" value={summary.requestCount} description={`${description} 这里只统计具有有效遥测数据的调用。`} />
+      </div>
+    </section>
   );
 }
 
@@ -600,11 +633,24 @@ function formatTokenCount(value: number): string {
 interface TokenUsageRow {
   resourceId: string;
   label: string;
+  source: string;
+  telemetryLayer: "provider" | "client";
+  coverage: string;
   inputTokens: number;
   outputTokens: number;
+  cachedTokens: number;
   totalTokens: number;
   requestCount: number;
   lastUsedAt: string;
+}
+
+interface TokenUsageSummary {
+  models: TokenUsageRow[];
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  totalTokens: number;
+  requestCount: number;
 }
 
 export function summarizeModelTokenUsage(nodes: ResourceNode[]) {
@@ -614,23 +660,40 @@ export function summarizeModelTokenUsage(nodes: ResourceNode[]) {
     const record = usage as Record<string, unknown>;
     const inputTokens = tokenNumber(record.inputTokens);
     const outputTokens = tokenNumber(record.outputTokens);
+    const cachedTokens = tokenNumber(record.cachedTokens);
     const totalTokens = tokenNumber(record.totalTokens);
     const requestCount = tokenNumber(record.requestCount);
     const lastUsedAt = typeof record.lastUsedAt === "string" ? record.lastUsedAt : "";
+    const telemetryLayer = record.telemetryLayer === "provider" ? "provider" : "client";
+    const source = typeof record.source === "string" ? record.source : node.sourceAdapter;
+    const coverage = typeof record.coverage === "string" ? record.coverage : "unknown";
     if (!lastUsedAt || requestCount === 0) return [];
-    return [{ resourceId: node.id, label: node.label, inputTokens, outputTokens, totalTokens, requestCount, lastUsedAt }];
+    return [{ resourceId: node.id, label: node.label, source, telemetryLayer, coverage, inputTokens, outputTokens, cachedTokens, totalTokens, requestCount, lastUsedAt }];
   });
 
+  const provider = summarizeTokenRows(models.filter((model) => model.telemetryLayer === "provider"));
+  const client = summarizeTokenRows(models.filter((model) => model.telemetryLayer === "client"));
+  return { models: [...provider.models, ...client.models], provider, client };
+}
+
+function summarizeTokenRows(models: TokenUsageRow[]): TokenUsageSummary {
   return models.reduce(
     (summary, model) => ({
       models: [...summary.models, model],
       inputTokens: summary.inputTokens + model.inputTokens,
       outputTokens: summary.outputTokens + model.outputTokens,
+      cachedTokens: summary.cachedTokens + model.cachedTokens,
       totalTokens: summary.totalTokens + model.totalTokens,
       requestCount: summary.requestCount + model.requestCount
     }),
-    { models: [] as TokenUsageRow[], inputTokens: 0, outputTokens: 0, totalTokens: 0, requestCount: 0 }
+    { models: [], inputTokens: 0, outputTokens: 0, cachedTokens: 0, totalTokens: 0, requestCount: 0 } as TokenUsageSummary
   );
+}
+
+function describeTokenCoverage(model: TokenUsageRow): string {
+  return model.telemetryLayer === "provider"
+    ? `${model.label} 的统计来自 ${model.source} 推理服务端，覆盖命中该 endpoint 的全部客户端，包括 Waku 和 headless 调用。无法仅凭服务端累计值区分具体客户端。`
+    : `${model.label} 的统计来自 ${model.source} 客户端记录，只覆盖该客户端保存的 usage，可能与服务端统计重叠。`;
 }
 
 function tokenNumber(value: unknown): number {

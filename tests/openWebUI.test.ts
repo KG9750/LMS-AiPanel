@@ -48,8 +48,11 @@ describe("Open WebUI metadata", () => {
     const model = result.nodes.find((node) => node.id === "openwebui:model:local-qwen");
     expect(model?.properties.tokenUsage).toEqual({
       source: "openwebui",
+      telemetryLayer: "client",
+      coverage: "openwebui-only",
       inputTokens: 140,
       outputTokens: 40,
+      cachedTokens: 0,
       totalTokens: 180,
       requestCount: 2,
       lastUsedAt: "2023-11-14T22:15:00.000Z"

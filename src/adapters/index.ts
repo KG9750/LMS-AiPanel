@@ -8,6 +8,7 @@ import { McpAdapter } from "./mcpAdapter";
 import { OpenWebUIAdapter } from "./openWebUIAdapter";
 import { SkillsAdapter } from "./skillsAdapter";
 import { createAdapterCatalog } from "./catalog";
+import { OmlxUsageAdapter } from "./omlxUsageAdapter";
 
 export function createAdapters(): StackAdapter[] {
   const catalog = createAdapterCatalog();
@@ -16,6 +17,7 @@ export function createAdapters(): StackAdapter[] {
     new CodexConfigAdapter(),
     new DockerAdapter(),
     new OpenWebUIAdapter(),
+    new OmlxUsageAdapter(catalog.omlxDataRoots),
     new LaunchAgentAdapter(),
     new LocalModelsAdapter(catalog.modelRoots),
     new SkillsAdapter(catalog.skillRoots),

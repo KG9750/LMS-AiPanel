@@ -17,6 +17,7 @@ interface OpenWebUIUsageRow {
   request_count: number;
   input_tokens: number;
   output_tokens: number;
+  cached_tokens: number;
   total_tokens: number;
   last_used_at: number;
 }
@@ -111,6 +112,7 @@ const TOKEN_USAGE_QUERY = `
     count(*) as request_count,
     sum(coalesce(json_extract(usage,'$.input_tokens'),json_extract(usage,'$.prompt_tokens'),json_extract(usage,'$.prompt_n'),0)) as input_tokens,
     sum(coalesce(json_extract(usage,'$.output_tokens'),json_extract(usage,'$.completion_tokens'),json_extract(usage,'$.predicted_n'),0)) as output_tokens,
+    sum(coalesce(json_extract(usage,'$.cached_tokens'),json_extract(usage,'$.cache_n'),0)) as cached_tokens,
     sum(coalesce(
       json_extract(usage,'$.total_tokens'),
       coalesce(json_extract(usage,'$.input_tokens'),json_extract(usage,'$.prompt_tokens'),json_extract(usage,'$.prompt_n'),0) +
@@ -127,8 +129,11 @@ const TOKEN_USAGE_QUERY = `
 
 export interface ModelTokenUsage {
   source: "openwebui";
+  telemetryLayer: "client";
+  coverage: "openwebui-only";
   inputTokens: number;
   outputTokens: number;
+  cachedTokens: number;
   totalTokens: number;
   requestCount: number;
   lastUsedAt: string;
@@ -138,8 +143,11 @@ export function normalizeTokenUsage(row: OpenWebUIUsageRow): ModelTokenUsage {
   const timestamp = Number(row.last_used_at);
   return {
     source: "openwebui",
+    telemetryLayer: "client",
+    coverage: "openwebui-only",
     inputTokens: nonnegativeInteger(row.input_tokens),
     outputTokens: nonnegativeInteger(row.output_tokens),
+    cachedTokens: nonnegativeInteger(row.cached_tokens),
     totalTokens: nonnegativeInteger(row.total_tokens),
     requestCount: nonnegativeInteger(row.request_count),
     lastUsedAt: new Date(timestamp < 1_000_000_000_000 ? timestamp * 1_000 : timestamp).toISOString()

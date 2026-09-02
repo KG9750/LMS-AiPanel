@@ -5,6 +5,7 @@ export interface AdapterCatalog {
   modelRoots: string[];
   skillRoots: string[];
   mcpConfigCandidates: string[];
+  omlxDataRoots: string[];
 }
 
 export function createAdapterCatalog(environment = process.env): AdapterCatalog {
@@ -26,6 +27,10 @@ export function createAdapterCatalog(environment = process.env): AdapterCatalog 
       homePath("Library", "Application Support", "Claude", "claude_desktop_config.json"),
       homePath(".lmstudio", "mcp.json"),
       homePath(".gemini", "antigravity", "mcp_config.json")
+    ]),
+    omlxDataRoots: configuredPaths(environment.LMS_AIPANEL_OMLX_DATA_ROOTS, [
+      homePath(".local", "share", "omlx"),
+      homePath("Library", "Application Support", "oMLX")
     ])
   };
 }

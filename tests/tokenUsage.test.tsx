@@ -5,14 +5,15 @@ import { GRAPH_SCHEMA_VERSION, type ResourceNode } from "../src/shared/schemas";
 describe("local model token summary", () => {
   it("sums only models with real usage records", () => {
     const nodes: ResourceNode[] = [
-      modelNode("one", { inputTokens: 100, outputTokens: 40, totalTokens: 140, requestCount: 2, lastUsedAt: "2026-09-02T00:00:00.000Z" }),
-      modelNode("two", { inputTokens: 20, outputTokens: 10, totalTokens: 30, requestCount: 1, lastUsedAt: "2026-09-02T01:00:00.000Z" }),
+      modelNode("one", { telemetryLayer: "provider", source: "omlx", inputTokens: 100, outputTokens: 40, cachedTokens: 60, totalTokens: 140, requestCount: 2, lastUsedAt: "2026-09-02T00:00:00.000Z" }),
+      modelNode("two", { telemetryLayer: "client", source: "openwebui", inputTokens: 20, outputTokens: 10, cachedTokens: 0, totalTokens: 30, requestCount: 1, lastUsedAt: "2026-09-02T01:00:00.000Z" }),
       modelNode("no-data", undefined)
     ];
 
     const summary = summarizeModelTokenUsage(nodes);
     expect(summary.models).toHaveLength(2);
-    expect(summary).toMatchObject({ inputTokens: 120, outputTokens: 50, totalTokens: 170, requestCount: 3 });
+    expect(summary.provider).toMatchObject({ inputTokens: 100, outputTokens: 40, cachedTokens: 60, totalTokens: 140, requestCount: 2 });
+    expect(summary.client).toMatchObject({ inputTokens: 20, outputTokens: 10, cachedTokens: 0, totalTokens: 30, requestCount: 1 });
   });
 });
 
