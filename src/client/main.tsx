@@ -15,6 +15,7 @@ import type {
   SystemSnapshot
 } from "../shared/schemas";
 import { HostBadge, type HostInfo } from "./hostBadge";
+import { ResourceDetail } from "./resourceDetail";
 import "./styles.css";
 
 const queryClient = new QueryClient();
@@ -211,6 +212,27 @@ async function fetchGraph(): Promise<SystemSnapshot> {
 }
 
 function App() {
+  const [detailId, setDetailId] = React.useState<string | null>(() => {
+    const match = window.location.hash.match(/^#\/resource\/(.+)$/);
+    return match ? decodeURIComponent(match[1]) : null;
+  });
+  const openDetail = (id: string) => {
+    window.location.hash = `#/resource/${encodeURIComponent(id)}`;
+    setDetailId(id);
+  };
+  const closeDetail = () => {
+    window.location.hash = "";
+    setDetailId(null);
+  };
+  React.useEffect(() => {
+    const onHash = () => {
+      const match = window.location.hash.match(/^#\/resource\/(.+)$/);
+      setDetailId(match ? decodeURIComponent(match[1]) : null);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
   const { data, error, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["graph"],
     queryFn: fetchGraph,
@@ -310,7 +332,7 @@ function App() {
                 </Explain>
               </div>
               {snapshot.nodes.slice(0, 60).map((node) => (
-                <div className="row" key={node.id}>
+                <div className="row" key={node.id} onClick={() => openDetail(node.id)}>
                   <Explain as="span" className="truncate" description={describeResource(node)}>
                     {node.label}
                   </Explain>
@@ -318,7 +340,7 @@ function App() {
                     {RESOURCE_TYPE_INFO[node.type].label}
                   </Explain>
                   <Status value={node.state} kind="resource" />
-                  <Explain as="span" description={`该资源由 ${node.sourceAdapter} adapter 采集。adapter 负责读取对应系统边界的数据，并把结果统一转换为 Resource Graph 节点。`}>
+                  <Explain as="span" description={`该资源由 ${node.sourceAdapter} adapter 采集。adapter 负责读取对应系统边界的数据，并把结果统一转换为 Resource Graph 节点。点击行打开资源详情。`}>
                     {node.sourceAdapter}
                   </Explain>
                 </div>
@@ -407,6 +429,8 @@ function App() {
           </div>
         </section>
       </main>
+
+      {detailId && <ResourceDetail resourceId={detailId} onClose={closeDetail} />}
     </div>
   );
 }

@@ -254,6 +254,70 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
     return envelope(ok(snapshot ? snapshot.nodes : []));
   });
 
+  /** Unified resource detail (issue #14): identity, evidence, relations, telemetry, actions, drift, audit. */
+  app.get<{ Params: { id: string } }>("/api/resources/:id", async (request) => {
+    const snapshot = latestSnapshot();
+    const id = decodeURIComponent(request.params.id);
+    const resource = snapshot?.nodes.find((node) => node.id === id);
+    if (!resource) {
+      return envelope(fail({ code: "RESOURCE_NOT_FOUND", message: `No resource ${id} in the latest snapshot` }));
+    }
+
+    const adapter = validAdapters.find((item) => item.id === resource.sourceAdapter);
+    const manifest = adapter?.manifest;
+    const run = runtime.getLastRuns().find((item) => item.adapterId === resource.sourceAdapter);
+    const capabilities = manifest ? resolveCapabilityStates(manifest, run) : [];
+
+    // Relationships from the graph edges.
+    const relations = (snapshot?.edges ?? [])
+      .filter((edge) => edge.source === id || edge.target === id)
+      .map((edge) => ({
+        relation: edge.relation,
+        direction: edge.source === id ? "outgoing" : "incoming",
+        otherId: edge.source === id ? edge.target : edge.source,
+        otherLabel: snapshot?.nodes.find((node) => node.id === (edge.source === id ? edge.target : edge.source))?.label ?? edge.source === id ? edge.target : edge.source
+      }));
+
+    // Telemetry series for this resource.
+    const telemetry = metrics
+      .listScopes(host.hostId)
+      .filter((scope) => scope.scope === id)
+      .map((scope) => metrics.series(host.hostId, scope.scope, scope.metric, scope.layer, 3600));
+
+    // Drift records for this resource.
+    const drift = (snapshot?.driftRecords ?? []).filter((record) => record.resourceId === id);
+
+    // Action runs for this resource.
+    const actionHistory = actionRuns.list(50).filter((run) => run.resourceId === id);
+
+    // Available actions: declared capabilities that are executable for managed
+    // resources — visible, but execution still goes through the Action Gateway.
+    const managed = resource.properties.registryManaged === true;
+    const availableActions = manifest
+      ? manifest.supportedCapabilities
+          .filter((capability) => capability.startsWith("action-"))
+          .map((capability) => capability.replace("action-", ""))
+      : [];
+
+    return envelope(
+      ok({
+        resource,
+        host,
+        managed,
+        capabilities,
+        relations,
+        telemetry,
+        drift,
+        actionHistory,
+        availableActions,
+        evidence: Object.entries(resource.properties)
+          .filter(([key]) => key === "evidence" || key.endsWith("Evidence") || key === "stateEvidence")
+          .flatMap(([, value]) => (Array.isArray(value) ? value : [value]))
+          .map((evidence) => ({ text: String(evidence), source: resource.sourceAdapter, observedAt: resource.lastSeenAt }))
+      })
+    );
+  });
+
   app.get("/api/drift", async () => {
     const snapshot = latestSnapshot();
     return envelope(ok(snapshot ? snapshot.driftRecords : []));
