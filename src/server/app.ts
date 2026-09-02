@@ -2,7 +2,8 @@ import path from "node:path";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
 import { nanoid } from "nanoid";
-import { createDisabledControlPlan, createReadPlan } from "../domain/actionGateway";
+import { createDisabledControlPlan, createReadPlan, gateActionPlan } from "../domain/actionGateway";
+import { ActionRunDriver, type AdapterActionExecutor } from "../domain/actionRun";
 import { evaluateDrift } from "../domain/drift";
 import { redactValue } from "../domain/redaction";
 import { isStamped, stampHostId } from "../domain/scope";
@@ -23,6 +24,7 @@ import { SnapshotStore } from "../storage/snapshots";
 import { RefreshRunStore } from "../storage/refreshRuns";
 import { MetricStore, type MetricLayer } from "../storage/metrics";
 import { SessionStore, type LocalSession } from "../storage/sessions";
+import { ActionRunStore } from "../storage/actionRuns";
 import { closeDatabase } from "../storage/db";
 
 export interface AppOptions {
@@ -500,32 +502,234 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
     );
   });
 
+  // ---- Action Gateway with ActionRun state machine (issue #17) ----
+
+  const actionRuns = new ActionRunStore(storage.db);
+  const actionDriver = new ActionRunDriver(actionRuns);
+  /** Executor bound to the current isolated runtime for a declared action. */
+  const executorForAction = (adapterId: string, action: string): AdapterActionExecutor | null => {
+    const adapter = validAdapters.find((item) => item.id === adapterId);
+    if (!adapter?.executor) return null;
+    return adapter.executor(action);
+  };
+
+  /** Plans an action. Executable ONLY for managed resources with declared actions. */
   app.post<{
-    Body: { resourceId?: string; action?: string };
+    Body: { resourceId?: string; action?: string; adapterId?: string };
   }>("/api/actions/plan", async (request) => {
     const resourceId = request.body.resourceId ?? "unknown";
     const action = request.body.action ?? "read";
-    const plan = action === "read" ? createReadPlan(resourceId) : createDisabledControlPlan(resourceId, action);
+
+    if (action === "read") {
+      const plan = createReadPlan(resourceId);
+      auditLog.push({
+        id: `audit:${nanoid()}`,
+        timestamp: new Date().toISOString(),
+        actor: "local-user",
+        action: "plan:read",
+        resourceId,
+        result: "planned"
+      });
+      return envelope(ok(plan));
+    }
+
+    const snapshot = latestSnapshot();
+    const resource = snapshot?.nodes.find((node) => node.id === resourceId);
+    const adapterId = resource?.sourceAdapter ?? request.body.adapterId ?? "unknown";
+    const manifest = validAdapters.find((item) => item.id === adapterId)?.manifest;
+    const gated = gateActionPlan({ resource, manifest, action });
+
     auditLog.push({
       id: `audit:${nanoid()}`,
       timestamp: new Date().toISOString(),
       actor: "local-user",
       action: `plan:${action}`,
       resourceId,
-      result: "planned"
+      result: gated.plan ? "planned" : "rejected",
+      evidence: gated.reason ? [gated.reason] : []
     });
-    return envelope(ok(plan));
+
+    if (!gated.plan) {
+      return envelope(fail({ code: "ACTION_NOT_PLANNABLE", message: gated.reason ?? "cannot plan" }));
+    }
+    if (gated.reason) {
+      return envelope(ok({ ...gated.plan, disabledReason: gated.reason }));
+    }
+    return envelope(ok(gated.plan));
   });
 
-  app.post("/api/actions/execute", async () =>
-    envelope(
-      fail({
-        code: "ACTION_EXECUTION_DISABLED",
-        message: "Real action execution is disabled in MVP. Generate an action plan instead.",
-        evidence: ["MVP supports read, dry-run, and configure contracts only."]
-      })
-    )
-  );
+  /** Creates the persisted ActionRun from an executable plan (session-guarded). */
+  app.post<{ Body: { resourceId?: string; action?: string; planId?: string } }>("/api/actions/runs", async (request) => {
+    if (!requireWrite(request)) {
+      return envelope(
+        fail({
+          code: "WRITE_GUARD_REJECTED",
+          message: "Action runs require a valid local session from an allowed origin"
+        })
+      );
+    }
+    const resourceId = request.body.resourceId ?? "";
+    const action = request.body.action ?? "";
+    const snapshot = latestSnapshot();
+    const resource = snapshot?.nodes.find((node) => node.id === resourceId);
+    const adapterId = resource?.sourceAdapter ?? "";
+    const manifest = validAdapters.find((item) => item.id === adapterId)?.manifest;
+    const gated = gateActionPlan({ resource, manifest, action });
+    if (!gated.plan || gated.reason) {
+      return envelope(
+        fail({
+          code: "ACTION_NOT_EXECUTABLE",
+          message: gated.reason ?? "action is not executable"
+        })
+      );
+    }
+    const run = actionRuns.create({
+      actionPlanId: request.body.planId ?? gated.plan.actionId,
+      resourceId,
+      adapterId,
+      action,
+      evidence: [`planned via ${gated.plan.actionId}`],
+      requiresRollback: false
+    });
+    auditLog.push({
+      id: `audit:${nanoid()}`,
+      timestamp: new Date().toISOString(),
+      actor: "local-user",
+      action: `run:create:${action}`,
+      resourceId,
+      result: "created"
+    });
+    return envelope(ok(run));
+  });
+
+  /** Confirms or rejects a planned run (operator consent, session-guarded). */
+  app.post<{ Params: { id: string }; Body: { decision?: string } }>("/api/actions/runs/:id/confirm", async (request) => {
+    if (!requireWrite(request)) {
+      return envelope(
+        fail({
+          code: "WRITE_GUARD_REJECTED",
+          message: "Action confirmation requires a valid local session"
+        })
+      );
+    }
+    try {
+      const run =
+        request.body.decision === "reject"
+          ? actionDriver.reject(request.params.id)
+          : actionDriver.confirm(request.params.id);
+      if (!run) return envelope(fail({ code: "NOT_FOUND", message: `No action run ${request.params.id}` }));
+      return envelope(ok(run));
+    } catch (error) {
+      return envelope(fail({ code: "INVALID_TRANSITION", message: error instanceof Error ? error.message : String(error) }));
+    }
+  });
+
+  /** Executes a confirmed run and verifies the final state (session-guarded). */
+  app.post<{ Params: { id: string } }>("/api/actions/runs/:id/execute", async (request) => {
+    if (!requireWrite(request)) {
+      return envelope(
+        fail({
+          code: "WRITE_GUARD_REJECTED",
+          message: "Action execution requires a valid local session"
+        })
+      );
+    }
+    const run = actionRuns.get(request.params.id);
+    if (!run) return envelope(fail({ code: "NOT_FOUND", message: `No action run ${request.params.id}` }));
+    const executor = executorForAction(run.adapterId, run.action);
+    if (!executor) {
+      return envelope(
+        fail({
+          code: "NO_EXECUTOR",
+          message: `No executor for ${run.adapterId}:${run.action} on this isolated runtime`
+        })
+      );
+    }
+    try {
+      const outcome = await actionDriver.execute(run.runId, executor);
+      auditLog.push({
+        id: `audit:${nanoid()}`,
+        timestamp: new Date().toISOString(),
+        actor: "local-user",
+        action: `run:execute:${run.action}`,
+        resourceId: run.resourceId,
+        result: outcome.ok ? "succeeded" : "failed",
+        evidence: outcome.evidence.slice(0, 10)
+      });
+      return envelope(ok(outcome.run));
+    } catch (error) {
+      return envelope(fail({ code: "EXECUTION_FAILED", message: error instanceof Error ? error.message : String(error) }));
+    }
+  });
+
+  /** Rolls a failed run back (session-guarded). */
+  app.post<{ Params: { id: string } }>("/api/actions/runs/:id/rollback", async (request) => {
+    if (!requireWrite(request)) {
+      return envelope(
+        fail({
+          code: "WRITE_GUARD_REJECTED",
+          message: "Action rollback requires a valid local session"
+        })
+      );
+    }
+    const run = actionRuns.get(request.params.id);
+    if (!run) return envelope(fail({ code: "NOT_FOUND", message: `No action run ${request.params.id}` }));
+    const executor = executorForAction(run.adapterId, run.action);
+    try {
+      const rolled = actionDriver.rollback(run.runId, executor ?? ({ action: run.action, execute: async () => ({ ok: false, evidence: [] }), verify: async () => ({ ok: false, evidence: [] }) } as AdapterActionExecutor));
+      if (!rolled) return envelope(fail({ code: "NOT_FOUND", message: `No action run ${request.params.id}` }));
+      return envelope(ok(rolled));
+    } catch (error) {
+      return envelope(fail({ code: "INVALID_TRANSITION", message: error instanceof Error ? error.message : String(error) }));
+    }
+  });
+
+  /** ActionRun history and single-run lookup. */
+  app.get("/api/actions/runs", async () => envelope(ok(actionRuns.list(50))));
+  app.get<{ Params: { id: string } }>("/api/actions/runs/:id", async (request) => {
+    const run = actionRuns.get(request.params.id);
+    if (!run) return envelope(fail({ code: "NOT_FOUND", message: `No action run ${request.params.id}` }));
+    return envelope(ok(run));
+  });
+
+  /** Restart recovery: re-verifies unfinished runs. */
+  app.post("/api/actions/reverify", async (request) => {
+    if (!requireWrite(request)) {
+      return envelope(
+        fail({
+          code: "WRITE_GUARD_REJECTED",
+          message: "Re-verification requires a valid local session"
+        })
+      );
+    }
+    const incomplete = actionRuns.incomplete();
+    const results = [];
+    for (const run of incomplete) {
+      const executor = executorForAction(run.adapterId, run.action);
+      if (!executor) {
+        results.push({ runId: run.runId, status: run.status, outcome: "no-executor" });
+        continue;
+      }
+      const verified = await executor.verify(run.resourceId);
+      if (verified.ok) {
+        const updated = actionRuns.update(run.runId, {
+          status: "succeeded",
+          finishedAt: new Date().toISOString(),
+          evidence: [...run.evidence, ...verified.evidence, "re-verified after restart"]
+        })!;
+        results.push({ runId: run.runId, status: updated.status, outcome: "re-verified" });
+      } else {
+        const updated = actionRuns.update(run.runId, {
+          status: "failed",
+          finishedAt: new Date().toISOString(),
+          error: "re-verification after restart failed",
+          evidence: [...run.evidence, ...verified.evidence]
+        })!;
+        results.push({ runId: run.runId, status: updated.status, outcome: "failed" });
+      }
+    }
+    return envelope(ok({ reverified: results.length, results }));
+  });
 
   app.get("/api/audit", async () => envelope(ok(auditLog)));
 

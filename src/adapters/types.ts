@@ -1,4 +1,5 @@
 import type { AdapterManifest, AdapterResult, AdapterRun, CapabilityState } from "../shared/schemas";
+import type { AdapterActionExecutor } from "../domain/actionRun";
 
 export interface AdapterContext {
   now: () => Date;
@@ -19,6 +20,12 @@ export interface StackAdapter {
   manifest: AdapterManifest;
   collect(context: AdapterContext): Promise<AdapterResult>;
   health(): Promise<HealthStatus>;
+  /**
+   * Optional executor hook (issue #17): returns an executor for a declared
+   * action verb, or null when the runtime cannot prove it. Absent on
+   * read-only adapters — the Action Gateway then reports NO_EXECUTOR.
+   */
+  executor?(verb: string): AdapterActionExecutor | null;
 }
 
 export interface AdapterRuntimeResult {
