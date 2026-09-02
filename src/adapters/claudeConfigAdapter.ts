@@ -1,11 +1,23 @@
 import path from "node:path";
-import type { AdapterResult } from "../shared/schemas";
+import type { AdapterManifest, AdapterResult } from "../shared/schemas";
 import type { AdapterContext, HealthStatus, StackAdapter } from "./types";
 import { edge, homePath, node, pathExists, readJsonFile } from "./helpers";
 
 export class ClaudeConfigAdapter implements StackAdapter {
   id = "claude";
   name = "Claude Code";
+  manifest: AdapterManifest = {
+    adapterId: "claude",
+    adapterName: "Claude Code",
+    manifestVersion: 1,
+    description: "Read-only scan of ~/.claude configuration files and the configured model.",
+    discoverySources: ["~/.claude/settings.json", "~/.claude/settings.local.json", "~/.claude/CLAUDE.md"],
+    permissions: ["home-directory-read"],
+    refreshProfile: { intervalSeconds: 120, onDemand: true },
+    telemetryCoverage: [],
+    supportedCapabilities: ["discovery", "config-read", "model-inventory"],
+    supportedActions: []
+  };
   private lastError: string | undefined;
 
   async collect(_context: AdapterContext): Promise<AdapterResult> {

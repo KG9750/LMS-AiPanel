@@ -1,5 +1,5 @@
 import { execa } from "execa";
-import type { AdapterResult, ResourceEdge } from "../shared/schemas";
+import type { AdapterManifest, AdapterResult, ResourceEdge } from "../shared/schemas";
 import type { AdapterContext, HealthStatus, StackAdapter } from "./types";
 import { edge, homePath, node, pathExists } from "./helpers";
 
@@ -15,6 +15,18 @@ interface OpenWebUIModelRow {
 export class OpenWebUIAdapter implements StackAdapter {
   id = "openwebui";
   name = "Open WebUI";
+  manifest: AdapterManifest = {
+    adapterId: "openwebui",
+    adapterName: "Open WebUI",
+    manifestVersion: 1,
+    description: "Read-only model inventory from the local Open WebUI SQLite database.",
+    discoverySources: ["~/.local/share/open-webui/webui.db"],
+    permissions: ["home-directory-read"],
+    refreshProfile: { intervalSeconds: 60, onDemand: true },
+    telemetryCoverage: [],
+    supportedCapabilities: ["discovery", "model-inventory"],
+    supportedActions: []
+  };
   private lastError: string | undefined;
 
   async collect(context: AdapterContext): Promise<AdapterResult> {

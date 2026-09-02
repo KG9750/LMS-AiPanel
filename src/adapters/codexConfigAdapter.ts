@@ -1,13 +1,25 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { parse } from "smol-toml";
-import type { AdapterResult } from "../shared/schemas";
+import type { AdapterManifest, AdapterResult } from "../shared/schemas";
 import type { AdapterContext, HealthStatus, StackAdapter } from "./types";
 import { edge, homePath, node, pathExists } from "./helpers";
 
 export class CodexConfigAdapter implements StackAdapter {
   id = "codex";
   name = "Codex";
+  manifest: AdapterManifest = {
+    adapterId: "codex",
+    adapterName: "Codex",
+    manifestVersion: 1,
+    description: "Read-only scan of ~/.codex configuration, model, and configured MCP servers.",
+    discoverySources: ["~/.codex/config.toml", "~/.codex/AGENTS.md"],
+    permissions: ["home-directory-read"],
+    refreshProfile: { intervalSeconds: 120, onDemand: true },
+    telemetryCoverage: [],
+    supportedCapabilities: ["discovery", "config-read", "model-inventory"],
+    supportedActions: []
+  };
   private lastError: string | undefined;
 
   async collect(_context: AdapterContext): Promise<AdapterResult> {

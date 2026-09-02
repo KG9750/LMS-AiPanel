@@ -1,12 +1,24 @@
 import fs from "node:fs/promises";
 import { parse } from "smol-toml";
-import type { AdapterResult } from "../shared/schemas";
+import type { AdapterManifest, AdapterResult } from "../shared/schemas";
 import type { AdapterContext, HealthStatus, StackAdapter } from "./types";
 import { edge, homePath, node, pathExists } from "./helpers";
 
 export class McpAdapter implements StackAdapter {
   id = "mcp";
   name = "MCP";
+  manifest: AdapterManifest = {
+    adapterId: "mcp",
+    adapterName: "MCP",
+    manifestVersion: 1,
+    description: "Read-only inventory of MCP configuration candidates and their declared servers.",
+    discoverySources: ["~/.codex/config.toml", "~/.lmstudio/mcp.json", "~/.gemini/antigravity/mcp_config.json"],
+    permissions: ["home-directory-read"],
+    refreshProfile: { intervalSeconds: 120, onDemand: true },
+    telemetryCoverage: [],
+    supportedCapabilities: ["discovery", "config-read"],
+    supportedActions: []
+  };
   private lastError: string | undefined;
 
   async collect(_context: AdapterContext): Promise<AdapterResult> {

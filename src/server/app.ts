@@ -8,9 +8,9 @@ import { redactValue } from "../domain/redaction";
 import { isStamped, stampHostId } from "../domain/scope";
 import { createAdapters } from "../adapters";
 import { AdapterRuntime } from "../adapters/runtime";
-import type { StackAdapter } from "../adapters/types";
+import { resolveCapabilityStates, type StackAdapter } from "../adapters/types";
 import { fail, ok } from "../shared/api";
-import type { ApiEnvelope, HostRecord, SystemSnapshot } from "../shared/schemas";
+import { adapterManifestSchema, type ApiEnvelope, type HostRecord, type SystemSnapshot } from "../shared/schemas";
 import { ensureStorage, type InitializedStorage } from "../storage/init";
 import { getAppPaths } from "../storage/paths";
 import { getOrCreateHost } from "../storage/host";
@@ -42,7 +42,29 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
   const host = getOrCreateHost(storage.db);
 
   const adapters = options.adapters ?? createAdapters();
-  const runtime = new AdapterRuntime(adapters, options.timeoutMs ?? 5_000, host.hostId);
+
+  // Manifest contract: every registered adapter must provide a valid,
+  // versioned capability manifest. An invalid manifest is isolated (the
+  // adapter is excluded with a recorded reason) instead of breaking the app.
+  const manifestFailures: Array<{ adapterId: string; reason: string }> = [];
+  const validAdapters: StackAdapter[] = [];
+  for (const adapter of adapters) {
+    const parsed = adapterManifestSchema.safeParse(adapter.manifest);
+    if (!parsed.success) {
+      manifestFailures.push({
+        adapterId: adapter.id,
+        reason: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")
+      });
+      continue;
+    }
+    if (parsed.data.adapterId !== adapter.id) {
+      manifestFailures.push({ adapterId: adapter.id, reason: "manifest adapterId does not match adapter id" });
+      continue;
+    }
+    validAdapters.push(adapter);
+  }
+
+  const runtime = new AdapterRuntime(validAdapters, options.timeoutMs ?? 5_000, host.hostId);
 
   let snapshotVersion = 1;
   const auditLog: Array<Record<string, unknown>> = [];
@@ -137,9 +159,31 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
   });
 
   app.get("/api/adapters", async () => {
+    const lastRuns = new Map(runtime.getLastRuns().map((run) => [run.adapterId, run]));
+    const failedIds = new Set(manifestFailures.map((f) => f.adapterId));
     return envelope(
       ok({
-        registered: adapters.map((adapter) => ({ id: adapter.id, name: adapter.name })),
+        registered: adapters.map((adapter) => {
+          if (failedIds.has(adapter.id)) {
+            return {
+              id: adapter.id,
+              name: adapter.name,
+              manifest: null,
+              capabilities: [],
+              health: null,
+              manifestError: manifestFailures.find((f) => f.adapterId === adapter.id)?.reason
+            };
+          }
+          const run = lastRuns.get(adapter.id);
+          return {
+            id: adapter.id,
+            name: adapter.name,
+            manifest: adapter.manifest,
+            capabilities: resolveCapabilityStates(adapter.manifest, run),
+            health: run ? { status: run.status, error: run.error, lastRunAt: run.finishedAt } : null
+          };
+        }),
+        manifestFailures,
         lastRuns: runtime.getLastRuns()
       })
     );

@@ -1,5 +1,5 @@
 import { execa } from "execa";
-import type { AdapterResult } from "../shared/schemas";
+import type { AdapterManifest, AdapterResult } from "../shared/schemas";
 import type { AdapterContext, HealthStatus, StackAdapter } from "./types";
 import { edge, node } from "./helpers";
 
@@ -15,6 +15,18 @@ interface DockerPsRow {
 export class DockerAdapter implements StackAdapter {
   id = "docker";
   name = "Docker";
+  manifest: AdapterManifest = {
+    adapterId: "docker",
+    adapterName: "Docker",
+    manifestVersion: 1,
+    description: "Read-only inventory of the local Docker runtime and its containers.",
+    discoverySources: ["docker ps --all"],
+    permissions: ["docker-socket-read"],
+    refreshProfile: { intervalSeconds: 30, onDemand: true },
+    telemetryCoverage: [],
+    supportedCapabilities: ["discovery", "process-state", "endpoint-state"],
+    supportedActions: []
+  };
   private lastError: string | undefined;
 
   async collect(context: AdapterContext): Promise<AdapterResult> {

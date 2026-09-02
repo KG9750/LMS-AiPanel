@@ -486,6 +486,45 @@ button {
   white-space: nowrap;
 }
 
+.cap-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  grid-column: 1 / -1;
+}
+
+.cap-chip {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+
+.cap-chip.supported {
+  background: #e8f6f0;
+  color: #1d7a4f;
+  border-color: #c3e6d4;
+}
+
+.cap-chip.unsupported {
+  background: #f0f2f4;
+  color: #7a8794;
+  border-color: #dfe4e9;
+}
+
+.cap-chip.unavailable {
+  background: #fdf3e2;
+  color: #9a6a10;
+  border-color: #f0d9ae;
+}
+
+.cap-chip.failed {
+  background: #fdeaea;
+  color: #b3362f;
+  border-color: #f2c6c2;
+}
+
 .empty {
   margin: 0;
   padding: 16px;

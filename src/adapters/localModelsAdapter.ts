@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { AdapterResult } from "../shared/schemas";
+import type { AdapterManifest, AdapterResult } from "../shared/schemas";
 import type { AdapterContext, HealthStatus, StackAdapter } from "./types";
 import { edge, node, pathKey } from "./helpers";
 
@@ -9,6 +9,18 @@ const MODEL_ROOT = "/Volumes/Leo_LLM/LLM Models";
 export class LocalModelsAdapter implements StackAdapter {
   id = "local-model";
   name = "Local Models";
+  manifest: AdapterManifest = {
+    adapterId: "local-model",
+    adapterName: "Local Models",
+    manifestVersion: 1,
+    description: "Read-only inventory of local model artifact directories on the model volume.",
+    discoverySources: ["/Volumes/Leo_LLM/LLM Models"],
+    permissions: ["volume-read"],
+    refreshProfile: { intervalSeconds: 300, onDemand: true },
+    telemetryCoverage: [],
+    supportedCapabilities: ["discovery", "model-inventory"],
+    supportedActions: []
+  };
   private lastError: string | undefined;
 
   async collect(_context: AdapterContext): Promise<AdapterResult> {

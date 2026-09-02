@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { execa } from "execa";
 import * as plist from "plist";
-import type { AdapterResult } from "../shared/schemas";
+import type { AdapterManifest, AdapterResult } from "../shared/schemas";
 import type { AdapterContext, HealthStatus, StackAdapter } from "./types";
 import { edge, homePath, node } from "./helpers";
 
@@ -15,6 +15,18 @@ interface LaunchAgentPlist {
 export class LaunchAgentAdapter implements StackAdapter {
   id = "launchagent";
   name = "LaunchAgent";
+  manifest: AdapterManifest = {
+    adapterId: "launchagent",
+    adapterName: "LaunchAgent",
+    manifestVersion: 1,
+    description: "Read-only inventory of user LaunchAgents and their launchctl load state.",
+    discoverySources: ["~/Library/LaunchAgents", "launchctl list"],
+    permissions: ["launchctl-list-read"],
+    refreshProfile: { intervalSeconds: 60, onDemand: true },
+    telemetryCoverage: [],
+    supportedCapabilities: ["discovery", "config-read", "process-state"],
+    supportedActions: []
+  };
   private lastError: string | undefined;
 
   async collect(context: AdapterContext): Promise<AdapterResult> {

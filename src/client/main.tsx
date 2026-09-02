@@ -2,8 +2,12 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import type {
+  AdapterManifest,
   AdapterRunStatus,
   ApiEnvelope,
+  Capability,
+  CapabilityState,
+  CapabilityStatus,
   DriftRecord,
   ResourceNode,
   ResourceState,
@@ -392,6 +396,7 @@ function App() {
                   <Explain as="small" description={describeAdapterRun(run)}>
                     {run.durationMs ?? 0}ms {run.stale ? "陈旧" : ""}
                   </Explain>
+                  <CapabilityChips adapterId={run.adapterId} />
                 </div>
               ))}
             </div>
@@ -450,6 +455,90 @@ function Explain({
         {description}
       </span>
     </Tag>
+  );
+}
+
+const CAPABILITY_STATUS_INFO: Record<CapabilityStatus, { label: string; description: string }> = {
+  supported: {
+    label: "支持",
+    description: "该能力由 adapter manifest 声明，并且最近一次采集成功，证据可用。"
+  },
+  unsupported: {
+    label: "不支持",
+    description: "该能力未被 adapter manifest 声明。显示为不支持而不是失败，表示这是设计边界而非错误。"
+  },
+  unavailable: {
+    label: "暂不可用",
+    description: "manifest 声明了该能力，但当前还没有可用的运行证据（例如尚未采集）。"
+  },
+  failed: {
+    label: "失败",
+    description: "该能力依赖的最近一次采集失败或超时，证据不可信，需要排查 adapter run。"
+  }
+};
+
+const CAPABILITY_LABELS: Record<Capability, string> = {
+  discovery: "发现",
+  "config-read": "配置读取",
+  "process-state": "进程状态",
+  "endpoint-state": "端点状态",
+  "model-inventory": "模型清单",
+  "model-load-state": "模型加载",
+  "memory-telemetry": "内存遥测",
+  "token-telemetry": "Token 遥测",
+  "event-stream": "事件流",
+  "health-check": "健康检查",
+  "action-start": "动作·启动",
+  "action-stop": "动作·停止",
+  "action-restart": "动作·重启",
+  "action-load-model": "动作·加载模型",
+  "action-unload-model": "动作·卸载模型",
+  "action-configure": "动作·配置",
+  "action-backup": "动作·备份",
+  "action-restore": "动作·恢复"
+};
+
+interface AdapterManifestEntry {
+  id: string;
+  name: string;
+  manifest: AdapterManifest | null;
+  capabilities: CapabilityState[];
+  health: { status: AdapterRunStatus; error?: string; lastRunAt?: string } | null;
+  manifestError?: string;
+}
+
+function CapabilityChips({ adapterId }: { adapterId: string }) {
+  const { data } = useQuery({
+    queryKey: ["adapters"],
+    queryFn: async (): Promise<AdapterManifestEntry[]> => {
+      const response = await fetch("/api/adapters");
+      const envelope = (await response.json()) as ApiEnvelope<{ registered: AdapterManifestEntry[] }>;
+      if (!envelope.ok) {
+        throw new Error(envelope.error.message);
+      }
+      return envelope.data.registered;
+    },
+    staleTime: 15_000
+  });
+
+  const entry = data?.find((item) => item.id === adapterId);
+  if (!entry?.manifest) {
+    return <span className="cap-chips" />;
+  }
+  const shown = entry.capabilities.slice(0, 4);
+  return (
+    <span className="cap-chips">
+      {shown.map((state) => (
+        <Explain
+          as="span"
+          key={state.capability}
+          className={`cap-chip ${state.status}`}
+          description={`${CAPABILITY_LABELS[state.capability]}：${CAPABILITY_STATUS_INFO[state.status].description}${state.reason ? `（${state.reason}）` : ""}`}
+        >
+          {CAPABILITY_LABELS[state.capability]}
+        </Explain>
+      ))}
+    </span>
   );
 }
 

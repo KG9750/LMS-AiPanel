@@ -1,13 +1,27 @@
 import { describe, expect, it } from "vitest";
 import { AdapterRuntime } from "../src/adapters/runtime";
 import type { AdapterContext, StackAdapter } from "../src/adapters/types";
-import { GRAPH_SCHEMA_VERSION } from "../src/shared/schemas";
+import { GRAPH_SCHEMA_VERSION, type AdapterManifest } from "../src/shared/schemas";
+
+const TEST_MANIFEST: AdapterManifest = {
+  adapterId: "good",
+  adapterName: "Good",
+  manifestVersion: 1,
+  description: "test",
+  discoverySources: [],
+  permissions: [],
+  refreshProfile: { intervalSeconds: 60, onDemand: true },
+  telemetryCoverage: [],
+  supportedCapabilities: [],
+  supportedActions: []
+};
 
 describe("AdapterRuntime", () => {
   it("isolates adapter failures and returns successful adapter resources", async () => {
     const good: StackAdapter = {
       id: "good",
       name: "Good",
+      manifest: TEST_MANIFEST,
       async collect(_context: AdapterContext) {
         return {
           nodes: [
@@ -35,6 +49,7 @@ describe("AdapterRuntime", () => {
     const bad: StackAdapter = {
       id: "bad",
       name: "Bad",
+      manifest: { ...TEST_MANIFEST, adapterId: "bad", adapterName: "Bad" },
       async collect() {
         throw new Error("boom");
       },

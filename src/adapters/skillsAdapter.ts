@@ -1,12 +1,24 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { AdapterResult } from "../shared/schemas";
+import type { AdapterManifest, AdapterResult } from "../shared/schemas";
 import type { AdapterContext, HealthStatus, StackAdapter } from "./types";
 import { edge, homePath, node } from "./helpers";
 
 export class SkillsAdapter implements StackAdapter {
   id = "skills";
   name = "Codex Skills";
+  manifest: AdapterManifest = {
+    adapterId: "skills",
+    adapterName: "Codex Skills",
+    manifestVersion: 1,
+    description: "Read-only inventory of Codex skills under ~/.codex/skills.",
+    discoverySources: ["~/.codex/skills"],
+    permissions: ["home-directory-read"],
+    refreshProfile: { intervalSeconds: 120, onDemand: true },
+    telemetryCoverage: [],
+    supportedCapabilities: ["discovery", "model-inventory"],
+    supportedActions: []
+  };
   private lastError: string | undefined;
 
   async collect(_context: AdapterContext): Promise<AdapterResult> {
