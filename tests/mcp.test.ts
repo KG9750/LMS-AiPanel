@@ -45,7 +45,7 @@ function startMcpEndpoint(): Promise<{ port: number; close: () => Promise<void> 
       req.on("data", (chunk) => (body += chunk));
       req.on("end", () => {
         try {
-          const parsed = JSON.parse(body) as { method?: string };
+          const parsed = JSON.parse(body) as { method?: string; id?: number };
           if (parsed.method === "initialize") {
             res.end(JSON.stringify({ jsonrpc: "2.0", id: parsed.id, result: { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "fake-mcp", version: "1.0.0" } } }));
           } else if (parsed.method === "tools/list") {
