@@ -6,14 +6,16 @@ import { createDisabledControlPlan, createReadPlan } from "../domain/actionGatew
 import { evaluateDrift } from "../domain/drift";
 import { redactValue } from "../domain/redaction";
 import { isStamped, stampHostId } from "../domain/scope";
+import { mergeRegistry } from "../domain/registryMerge";
 import { createAdapters } from "../adapters";
 import { AdapterRuntime } from "../adapters/runtime";
 import { resolveCapabilityStates, type StackAdapter } from "../adapters/types";
 import { fail, ok } from "../shared/api";
-import { adapterManifestSchema, type ApiEnvelope, type HostRecord, type SystemSnapshot } from "../shared/schemas";
+import { adapterManifestSchema, registryEntrySchema, type ApiEnvelope, type HostRecord, type RegistryEntry, type SystemSnapshot } from "../shared/schemas";
 import { ensureStorage, type InitializedStorage } from "../storage/init";
 import { getAppPaths } from "../storage/paths";
 import { getOrCreateHost } from "../storage/host";
+import { RegistryRepository } from "../storage/registry";
 import { closeDatabase } from "../storage/db";
 
 export interface AppOptions {
@@ -31,6 +33,7 @@ export interface BuiltApp {
   storage: InitializedStorage;
   host: HostRecord;
   runtime: AdapterRuntime;
+  registry: RegistryRepository;
   close: () => Promise<void>;
 }
 
@@ -65,6 +68,7 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
   }
 
   const runtime = new AdapterRuntime(validAdapters, options.timeoutMs ?? 5_000, host.hostId);
+  const registry = new RegistryRepository(storage.db, host.hostId);
 
   let snapshotVersion = 1;
   const auditLog: Array<Record<string, unknown>> = [];
@@ -72,12 +76,14 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
 
   const collectSnapshot = async (): Promise<SystemSnapshot> => {
     const collected = await runtime.collectAll();
-    const driftRecords = evaluateDrift(collected.result.nodes);
+    const stamped = stampHostId(collected.result.nodes, host.hostId);
+    const merged = mergeRegistry(stamped, registry.list());
+    const driftRecords = evaluateDrift(merged.nodes);
     const version = snapshotVersion++;
     return {
       version,
       host,
-      nodes: stampHostId(collected.result.nodes, host.hostId),
+      nodes: merged.nodes,
       edges: collected.result.edges,
       adapterRuns: collected.runs,
       driftRecords
@@ -156,6 +162,86 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
   app.get("/api/drift", async () => {
     const snapshot = await collectSnapshot();
     return envelope(ok(snapshot.driftRecords));
+  });
+
+  // ---- Managed Resource Registry (issue #3) ----
+
+  app.get("/api/registry", async () => {
+    const snapshot = await collectSnapshot();
+    const merged = mergeRegistry(snapshot.nodes, registry.list());
+    return envelope(
+      ok({
+        entries: registry.list(),
+        merges: merged.merges,
+        attention: merged.attention
+      })
+    );
+  });
+
+  app.post<{ Body: Partial<RegistryEntry> }>("/api/registry", async (request) => {
+    const parsed = registryEntrySchema.omit({ id: true, hostId: true, createdAt: true, updatedAt: true }).safeParse(request.body);
+    if (!parsed.success) {
+      return envelope(
+        fail({
+          code: "INVALID_REGISTRY_ENTRY",
+          message: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")
+        })
+      );
+    }
+    const entry = registry.create({ ...parsed.data, hostId: host.hostId } as never);
+    auditLog.push({
+      id: `audit:${nanoid()}`,
+      timestamp: new Date().toISOString(),
+      actor: "local-user",
+      action: `registry:create:${entry.kind}`,
+      resourceId: entry.id,
+      result: "created"
+    });
+    return envelope(ok(entry));
+  });
+
+  app.put<{ Params: { id: string }; Body: Partial<RegistryEntry> }>("/api/registry/:id", async (request) => {
+    const parsed = registryEntrySchema
+      .omit({ id: true, hostId: true, createdAt: true, updatedAt: true })
+      .partial()
+      .safeParse(request.body);
+    if (!parsed.success) {
+      return envelope(
+        fail({
+          code: "INVALID_REGISTRY_ENTRY",
+          message: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")
+        })
+      );
+    }
+    const entry = registry.update(request.params.id, parsed.data);
+    if (!entry) {
+      return envelope(fail({ code: "NOT_FOUND", message: `No registry entry ${request.params.id}` }));
+    }
+    auditLog.push({
+      id: `audit:${nanoid()}`,
+      timestamp: new Date().toISOString(),
+      actor: "local-user",
+      action: `registry:update:${entry.id}`,
+      resourceId: entry.id,
+      result: "updated"
+    });
+    return envelope(ok(entry));
+  });
+
+  app.delete<{ Params: { id: string } }>("/api/registry/:id", async (request) => {
+    const removed = registry.remove(request.params.id);
+    if (!removed) {
+      return envelope(fail({ code: "NOT_FOUND", message: `No registry entry ${request.params.id}` }));
+    }
+    auditLog.push({
+      id: `audit:${nanoid()}`,
+      timestamp: new Date().toISOString(),
+      actor: "local-user",
+      action: "registry:delete",
+      resourceId: request.params.id,
+      result: "deleted"
+    });
+    return envelope(ok({ deleted: true, id: request.params.id }));
   });
 
   app.get("/api/adapters", async () => {
@@ -248,6 +334,7 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
     storage,
     host,
     runtime,
+    registry,
     close: async () => {
       await app.close();
       closeDatabase(storage.db);

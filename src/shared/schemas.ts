@@ -226,6 +226,54 @@ export const systemSnapshotSchema = z.object({
   driftRecords: z.array(driftRecordSchema)
 });
 
+// ---------------------------------------------------------------------------
+// Managed Resource Registry (issue #3)
+// ---------------------------------------------------------------------------
+
+export const registryKindSchema = z.enum(["match", "supplement", "ignore"]);
+
+export const registryEntrySchema = z.object({
+  id: z.string().min(1),
+  hostId: z.string().min(1),
+  kind: registryKindSchema,
+  /** Adapter id this entry targets; omitted for endpoint-only supplements. */
+  adapterId: z.string().optional(),
+  resourceType: resourceTypeSchema,
+  /** Stable key used to match a discovered resource. */
+  stableKey: z.string().min(1),
+  label: z.string().min(1),
+  /** Custom endpoint contributed by the operator. */
+  customEndpoint: z.string().optional(),
+  /** Managed resources are the only ones eligible for declared actions. */
+  managed: z.boolean().default(false),
+  note: z.string().optional(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+
+/** How a discovered resource relates to registry intent. */
+export const mergeStatusSchema = z.enum([
+  "discovered",
+  "registered",
+  "configured",
+  "live",
+  "managed",
+  "unverified",
+  "conflict"
+]);
+
+export const registryMergeSchema = z.object({
+  resourceId: z.string().min(1),
+  status: mergeStatusSchema,
+  /** Human-readable evidence of how discovery and registry intent merged. */
+  evidence: z.array(z.string()).default([])
+});
+
+export type RegistryKind = z.infer<typeof registryKindSchema>;
+export type RegistryEntry = z.infer<typeof registryEntrySchema>;
+export type MergeStatus = z.infer<typeof mergeStatusSchema>;
+export type RegistryMerge = z.infer<typeof registryMergeSchema>;
+
 export type ResourceType = z.infer<typeof resourceTypeSchema>;
 export type ResourceState = z.infer<typeof resourceStateSchema>;
 export type EdgeRelation = z.infer<typeof edgeRelationSchema>;
