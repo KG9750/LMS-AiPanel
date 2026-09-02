@@ -26,7 +26,9 @@ import { RefreshRunStore } from "../storage/refreshRuns";
 import { MetricStore, type MetricLayer } from "../storage/metrics";
 import { SessionStore, type LocalSession } from "../storage/sessions";
 import { ActionRunStore } from "../storage/actionRuns";
+import { GatewayStore } from "../storage/gateway";
 import { ConfigCenter } from "../domain/configCenter";
+import { ObservabilityGateway } from "../domain/gateway";
 import { closeDatabase } from "../storage/db";
 
 export interface AppOptions {
@@ -108,6 +110,8 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
   const refresher = new RefreshOrchestrator(refreshStore, scheduler, sseHub, host.hostId);
   const metrics = new MetricStore(storage.db);
   const sessions = new SessionStore(storage.db, host.hostId, options.sessionTtlMs);
+  const gatewayStore = new GatewayStore(storage.db, host.hostId);
+  const gateway = new ObservabilityGateway(gatewayStore);
 
   /** Allowed browser origins for write requests (issue #16). */
   const allowedOrigins = new Set([
@@ -920,6 +924,50 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
       backupId: restored.id
     });
     return envelope(ok({ restored: true, filePath: restored.filePath }));
+  });
+
+  // ---- Observability Gateway (issue #12) ----
+
+  /** Registers one explicitly configured gateway client. */
+  app.post<{ Body: { clientName?: string; model?: string; targetEndpoint?: string } }>("/api/gateway/clients", async (request) => {
+    if (!requireWrite(request)) {
+      return envelope(
+        fail({
+          code: "WRITE_GUARD_REJECTED",
+          message: "Gateway client registration requires a valid local session"
+        })
+      );
+    }
+    const { clientName, model, targetEndpoint } = request.body;
+    if (!clientName || !model || !targetEndpoint) {
+      return envelope(fail({ code: "INVALID_GATEWAY_CLIENT", message: "clientName, model, and targetEndpoint are required" }));
+    }
+    const client = gatewayStore.registerClient({ clientName, model, targetEndpoint });
+    auditLog.push({
+      id: `audit:${nanoid()}`,
+      timestamp: new Date().toISOString(),
+      actor: "local-user",
+      action: "gateway:register",
+      resourceId: client.id,
+      result: "registered"
+    });
+    return envelope(ok(client));
+  });
+
+  /** Gateway client list + coverage report. */
+  app.get("/api/gateway", async () => {
+    return envelope(
+      ok({
+        clients: gatewayStore.listClients(),
+        coverage: gatewayStore.coverage(),
+        recent: gatewayStore.recent(20)
+      })
+    );
+  });
+
+  /** OpenAI-compatible chat completions proxy (metrics only, no body storage). */
+  app.post("/v1/chat/completions", async (request, reply) => {
+    await gateway.proxy(request, reply);
   });
 
   app.get("/api/audit", async () => envelope(ok(auditLog)));
