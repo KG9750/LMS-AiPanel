@@ -36,8 +36,9 @@ describe("oMLX provider telemetry", () => {
       timeoutMs: 1_000,
       signal: new AbortController().signal
     });
-    const model = result.nodes.find((item) => item.type === "model");
-    expect(model?.properties.tokenUsage).toMatchObject({
+    const endpoint = result.nodes.find((item) => item.properties.usageAttribution === "endpoint");
+    expect(endpoint?.type).toBe("runtime");
+    expect(endpoint?.properties.tokenUsage).toMatchObject({
       source: "omlx",
       telemetryLayer: "provider",
       coverage: "all-endpoint-clients",
@@ -45,8 +46,10 @@ describe("oMLX provider telemetry", () => {
       outputTokens: 250,
       cachedTokens: 600,
       totalTokens: 1250,
-      requestCount: 12
+      requestCount: 12,
+      lastUsedAt: null
     });
+    expect(result.nodes.some((item) => item.type === "model")).toBe(false);
   });
 
   it("supports per-model oMLX statistic field names", async () => {
@@ -77,7 +80,8 @@ describe("oMLX provider telemetry", () => {
       outputTokens: 100,
       cachedTokens: 700,
       totalTokens: 1000,
-      requestCount: 4
+      requestCount: 4,
+      lastUsedAt: null
     });
   });
 });

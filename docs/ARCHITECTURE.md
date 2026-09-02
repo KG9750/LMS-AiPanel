@@ -5,7 +5,7 @@
 1. **UI Shell**: React, Vite, TypeScript. Shows resource tables, lightweight stack map, drift evidence, adapter health, and audit entries.
 2. **Control API**: Fastify and Zod. All endpoints return `{ ok, data, error, meta }`.
 3. **Domain Core**: Resource Graph, Adapter Runtime, Drift Engine, Action Gateway, Redaction Service, Snapshot Manager.
-4. **Adapters**: Static MVP adapters for Claude, Codex, Docker, Open WebUI, LaunchAgent, Local Models, Skills, and MCP.
+4. **Adapters**: Static MVP adapters for Claude, Codex, Docker, Open WebUI, oMLX telemetry, LaunchAgent, Local Models, Skills, and MCP. The optional Local Skill Manager adapter is registered only when its project path is explicitly configured.
 5. **Local State**: SQLite WAL-ready pathing and migration SQL under the user Application Support directory.
 
 ## Resource Graph
@@ -81,6 +81,14 @@ Snapshots store redacted summaries and evidence, not full raw config contents. S
 ## Adapter Catalog
 
 The MVP keeps static adapter registration while centralizing built-in paths in an `AdapterCatalog`. Model roots, skill roots, and MCP config candidates can be overridden with path-delimited environment variables. One unreadable root does not prevent other configured roots from being scanned.
+
+## Skill Discovery And Management
+
+The generic Skills adapter owns discovery: it inventories skill directories from configured roots without requiring a management tool. Local Skill Manager is an optional management and validation side path enabled by `LMS_AIPANEL_SKILL_MANAGER_PATH`; no machine-specific project path is built in.
+
+The Resource Graph hot path only verifies that the configured directory and built CLI exist, then probes `/api/session` to identify the panel. A full `scan --dry-run --json` runs only through `/api/modules/skill-manager`, receives request cancellation, and is limited to five seconds. The response is normalized and validated with Zod before crossing the API boundary; summary counts are recomputed from accepted skill records.
+
+The dedicated panel requires a one-time URL printed by its own process. LMS-AiPanel records neither that URL nor its token and does not construct a tokenless link. Skill Manager scan output is an on-demand response and is not persisted in Resource Graph snapshots.
 
 ## Local Model Token Usage
 

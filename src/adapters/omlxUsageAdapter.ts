@@ -55,16 +55,16 @@ export class OmlxUsageAdapter implements StackAdapter {
           const stats = (await readJsonFile(statsPath)) as OmlxStats | null;
           if (!stats) continue;
           const settings = (await readJsonFile(path.join(instancePath, "model_settings.json"))) as OmlxModelSettings | null;
-          const modifiedAt = (await fs.stat(statsPath)).mtime.toISOString();
-          const observations = observationsFromStats(stats, settings, entry.name, modifiedAt);
+          const observations = observationsFromStats(stats, settings, entry.name);
           for (const observation of observations) {
-            const modelNode = node(this.id, "model", pathKey(`${statsPath}:${observation.modelId}`), observation.label, "ok", {
+            const usageNode = node(this.id, observation.attribution === "endpoint" ? "runtime" : "model", pathKey(`${statsPath}:${observation.stableKey}`), observation.label, "ok", {
               modelId: observation.modelId,
+              usageAttribution: observation.attribution,
               tokenUsage: observation.tokenUsage,
               evidence: ["oMLX cumulative provider statistics"]
             });
-            nodes.push(modelNode);
-            edges.push(edge(root.id, "watches", modelNode.id));
+            nodes.push(usageNode);
+            edges.push(edge(root.id, "watches", usageNode.id));
           }
         } catch (error) {
           errors.push(error instanceof Error ? error.message : String(error));
@@ -85,26 +85,30 @@ export class OmlxUsageAdapter implements StackAdapter {
 function observationsFromStats(
   stats: OmlxStats,
   settings: OmlxModelSettings | null,
-  instanceName: string,
-  lastUsedAt: string
+  instanceName: string
 ) {
-  const configuredModels = Object.entries(settings?.models ?? {});
   const perModel = Object.entries(stats.per_model ?? {});
   if (perModel.length > 0) {
     return perModel.map(([modelId, modelStats]) => ({
       modelId,
+      stableKey: modelId,
+      attribution: "model" as const,
       label: settings?.models?.[modelId]?.display_name ?? modelId,
-      tokenUsage: tokenUsageFromStats(modelStats, lastUsedAt)
+      tokenUsage: tokenUsageFromStats(modelStats)
     }));
   }
 
-  const selected = configuredModels.find(([, config]) => config.is_default) ?? configuredModels[0];
-  const modelId = selected?.[0] ?? instanceName.replace(/-data$/, "");
-  const label = selected?.[1].display_name ?? modelId;
-  return [{ modelId, label, tokenUsage: tokenUsageFromStats(stats, lastUsedAt) }];
+  const instanceLabel = instanceName.replace(/-data$/, "");
+  return [{
+    modelId: null,
+    stableKey: "endpoint-total",
+    attribution: "endpoint" as const,
+    label: `${instanceLabel} endpoint 合计`,
+    tokenUsage: tokenUsageFromStats(stats)
+  }];
 }
 
-function tokenUsageFromStats(stats: Partial<OmlxStats>, lastUsedAt: string) {
+function tokenUsageFromStats(stats: Partial<OmlxStats>) {
   const inputTokens = count(stats.total_prompt_tokens ?? stats.prompt_tokens);
   const outputTokens = count(stats.total_completion_tokens ?? stats.completion_tokens);
   return {
@@ -116,7 +120,7 @@ function tokenUsageFromStats(stats: Partial<OmlxStats>, lastUsedAt: string) {
     cachedTokens: count(stats.total_cached_tokens ?? stats.cached_tokens),
     totalTokens: inputTokens + outputTokens,
     requestCount: count(stats.total_requests ?? stats.requests),
-    lastUsedAt
+    lastUsedAt: null
   };
 }
 

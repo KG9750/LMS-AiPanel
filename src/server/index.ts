@@ -11,7 +11,8 @@ import { AdapterRuntime } from "../adapters/runtime";
 import { fail, ok } from "../shared/api";
 import { ensureStorage } from "../storage/init";
 import { getAppPaths } from "../storage/paths";
-import type { ApiEnvelope, SystemSnapshot } from "../shared/schemas";
+import { skillManagerModuleSnapshotSchema, type ApiEnvelope, type SystemSnapshot } from "../shared/schemas";
+import { collectSkillManagerModule } from "../modules/skillManagerModule";
 import { resolveServerHost } from "./config";
 import { StorageRepository, type AuditEntry } from "../storage/repository";
 import type { StorageStatus } from "../storage/init";
@@ -128,6 +129,20 @@ async function main() {
         health
       })
     );
+  });
+
+  app.get("/api/modules/skill-manager", async (request) => {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    request.raw.once("aborted", abort);
+    try {
+      const snapshot = await collectSkillManagerModule({ signal: controller.signal, timeoutMs: 5_000 });
+      return envelope(ok(skillManagerModuleSnapshotSchema.parse(snapshot)));
+    } catch (error) {
+      return envelope(fail({ code: "SKILL_MANAGER_MODULE_FAILED", message: errorMessage(error) }));
+    } finally {
+      request.raw.removeListener("aborted", abort);
+    }
   });
 
   app.post<{ Body: unknown }>("/api/actions/plan", async (request, reply) => {

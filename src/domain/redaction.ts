@@ -37,13 +37,6 @@ export function redactValue(value: unknown): unknown {
   return value;
 }
 
-export function redactStringForDisplay(value: string): string {
-  if (!SENSITIVE_KEY_PATTERN.test(value) && !TOKEN_KEY_PATTERN.test(value)) {
-    return value;
-  }
-  return "<redacted>";
-}
-
 export function redactAdapterResult(result: AdapterResult): AdapterResult {
   const redacted = redactValue(result) as AdapterResult;
   for (const hint of result.redactionHints) {

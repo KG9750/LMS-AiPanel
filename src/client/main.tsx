@@ -5,6 +5,8 @@ import type {
   AdapterRunStatus,
   ApiEnvelope,
   DriftRecord,
+  SkillManagerModuleSnapshot,
+  SkillManagerSkill,
   ResourceNode,
   ResourceState,
   ResourceType,
@@ -14,12 +16,13 @@ import "./styles.css";
 
 const queryClient = new QueryClient();
 
-const NAV_ITEMS: Array<{ label: string; types?: ResourceType[] }> = [
+const NAV_ITEMS: Array<{ label: string; types?: ResourceType[]; module?: "skill-manager" }> = [
   { label: "运行总览" },
   { label: "AI 工具", types: ["tool"] },
   { label: "AI 助手", types: ["assistant", "channel"] },
   { label: "本地模型", types: ["model", "volume"] },
   { label: "运行框架", types: ["runtime", "process", "container", "port"] },
+  { label: "技能管理", module: "skill-manager" },
   { label: "技能", types: ["skill"] },
   { label: "MCP", types: ["mcp"] },
   { label: "配置文件", types: ["config"] }
@@ -210,12 +213,28 @@ async function fetchGraph(): Promise<SystemSnapshot> {
   return envelope.data;
 }
 
+async function fetchSkillManagerModule(): Promise<SkillManagerModuleSnapshot> {
+  const response = await fetch("/api/modules/skill-manager");
+  const envelope = (await response.json()) as ApiEnvelope<SkillManagerModuleSnapshot>;
+  if (!envelope.ok) {
+    throw new Error(envelope.error.message);
+  }
+  return envelope.data;
+}
+
 function App() {
   const [activeView, setActiveView] = useState(0);
+  const selectedView = NAV_ITEMS[activeView] ?? NAV_ITEMS[0]!;
   const { data, error, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["graph"],
     queryFn: fetchGraph,
     refetchInterval: 15_000
+  });
+  const skillManagerQuery = useQuery({
+    queryKey: ["skill-manager-module"],
+    queryFn: fetchSkillManagerModule,
+    enabled: selectedView.module === "skill-manager",
+    refetchInterval: selectedView.module === "skill-manager" ? 15_000 : false
   });
 
   if (isLoading) {
@@ -227,7 +246,6 @@ function App() {
   }
 
   const snapshot = data!;
-  const selectedView = NAV_ITEMS[activeView];
   const filteredNodes = selectedView.types
     ? snapshot.nodes.filter((node) => selectedView.types?.includes(node.type))
     : snapshot.nodes;
@@ -270,7 +288,12 @@ function App() {
             >
               127.0.0.1
             </Explain>
-            <button onClick={() => void refetch()}>{isFetching ? "正在刷新" : "刷新快照"}</button>
+            <button onClick={() => {
+              void refetch();
+              if (selectedView.module === "skill-manager") void skillManagerQuery.refetch();
+            }}>
+              {isFetching || skillManagerQuery.isFetching ? "正在刷新" : "刷新快照"}
+            </button>
           </div>
         </header>
 
@@ -292,6 +315,13 @@ function App() {
           <Metric metric="stopped" value={totals.stopped} tone="warn" />
         </section>
 
+        {selectedView.module === "skill-manager" ? (
+          <SkillManagerModulePanel
+            data={skillManagerQuery.data}
+            error={skillManagerQuery.error}
+            isLoading={skillManagerQuery.isLoading}
+          />
+        ) : (
         <section className="content-grid">
           <div className="panel table-panel">
             <div className="panel-head">
@@ -395,7 +425,7 @@ function App() {
                     <Explain as="span" description="输入 token 中由推理服务复用缓存的累计数量。缓存 token 通常仍包含在输入 token 中。">缓存</Explain>
                     <Explain as="span" description="该模型输入与输出 token 的累计总量。">总计</Explain>
                     <Explain as="span" description="该模型具有有效 usage 数据的调用次数。">调用</Explain>
-                    <Explain as="span" description="该模型最近一条有效 usage 调用记录的本机时间。">最近调用</Explain>
+                    <Explain as="span" description="客户端记录可提供最近调用时间；仅有累计计数的服务端遥测会显示“未知”，不会用文件修改时间冒充调用时间。">最近活动</Explain>
                   </div>
                   {tokenStats.models.map((model) => (
                     <div className="token-row" key={model.resourceId}>
@@ -408,7 +438,7 @@ function App() {
                       <span>{formatTokenCount(model.cachedTokens)}</span>
                       <strong>{formatTokenCount(model.totalTokens)}</strong>
                       <span>{formatTokenCount(model.requestCount)}</span>
-                      <span>{formatDate(model.lastUsedAt)}</span>
+                      <span>{model.lastUsedAt ? formatDate(model.lastUsedAt) : "未知"}</span>
                     </div>
                   ))}
                 </div>
@@ -472,7 +502,153 @@ function App() {
             </div>
           </div>
         </section>
+        )}
       </main>
+    </div>
+  );
+}
+
+function SkillManagerModulePanel({
+  data,
+  error,
+  isLoading
+}: {
+  data: SkillManagerModuleSnapshot | undefined;
+  error: Error | null;
+  isLoading: boolean;
+}) {
+  if (isLoading) {
+    return <div className="panel module-panel"><p className="empty">正在读取技能管理器...</p></div>;
+  }
+
+  if (error) {
+    return <div className="panel module-panel"><p className="empty error">读取技能管理器失败：{error.message}</p></div>;
+  }
+
+  if (!data) {
+    return <div className="panel module-panel"><p className="empty">暂无技能管理器数据。</p></div>;
+  }
+
+  const attentionCount = data.summary.byValidation.WARN + data.summary.byValidation.ERROR + data.summary.byValidation.UNKNOWN;
+
+  return (
+    <section className="module-layout">
+      <div className="panel module-hero">
+        <div>
+          <h2>本地技能管理器</h2>
+          <p>作为 LMS-AiPanel 的技能管理模块接入，主面板展示真实扫描结果和运行入口；禁用、恢复、编辑仍由独立 Local Skill Manager 面板负责。</p>
+        </div>
+        <span className={`module-state ${data.available ? "ok" : "warning"}`}>
+          {data.available ? "已接入" : data.configured ? "不可用" : "未配置"}
+        </span>
+      </div>
+
+      <div className="module-metrics">
+        <ModuleMetric label="安装实例" value={data.summary.total} description="成功解析且通过模块契约校验的技能安装实例总数。相同技能在不同平台或作用域中会分别计数。" />
+        <ModuleMetric label="Codex" value={data.summary.byPlatform.codex} description="属于 Codex 平台的技能安装实例数量。" />
+        <ModuleMetric label="Claude" value={data.summary.byPlatform.claude} description="属于 Claude 平台的技能安装实例数量。" />
+        <ModuleMetric label="禁用" value={data.summary.byStatus.disabled} description="当前被明确标记为禁用的技能实例数量。" />
+        <ModuleMetric label="只读" value={data.summary.byStatus.readonly} description="只能读取和检查、不能由技能管理器直接修改的技能实例数量。" />
+        <ModuleMetric label="需关注" value={attentionCount} tone={attentionCount ? "warn" : "ok"} description="验证状态为警告、错误或未知的技能实例总数，需要结合具体问题逐项检查。" />
+      </div>
+
+      <div className="module-columns">
+        <div className="panel">
+          <div className="panel-head">
+            <h2>模块边界</h2>
+            <span>{formatDate(data.scannedAt)}</span>
+          </div>
+          <div className="module-facts">
+            <Fact label="项目路径" value={data.projectPath || "未配置"} />
+            <Fact label="CLI" value={data.cliPath || "未配置"} />
+            <Fact label="独立面板" value={data.panel.accessMessage} />
+            <Fact label="只读启动" value={data.panel.readonlyCommand || "配置项目路径后可用"} code />
+          </div>
+          {data.error ? <p className="module-warning">{data.error}</p> : null}
+          {data.panel.portOccupied && !data.panel.identityVerified ? (
+            <p className="module-warning">端口 {data.panel.port} 已被占用，但该服务未通过技能管理器身份校验。</p>
+          ) : null}
+        </div>
+
+        <div className="panel">
+          <div className="panel-head">
+            <h2>根目录警告</h2>
+            <span>{data.rootWarnings.length} 条</span>
+          </div>
+          {data.rootWarnings.length === 0 ? (
+            <p className="empty">当前没有根目录警告。</p>
+          ) : (
+            <div className="issue-list">
+              {data.rootWarnings.map((issue) => (
+                <div className="issue" key={`${issue.code}:${issue.message}`}>
+                  <strong>{issue.code}</strong>
+                  <span>{issue.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="panel">
+        <div className="panel-head">
+          <h2>最近更新</h2>
+          <span>{data.recentSkills.length} 个技能实例</span>
+        </div>
+        <SkillManagerTable skills={data.recentSkills} />
+      </div>
+
+      <div className="panel">
+        <div className="panel-head">
+          <h2>全部技能</h2>
+          <span>{data.skills.length} 个安装实例</span>
+        </div>
+        <SkillManagerTable skills={data.skills} />
+      </div>
+    </section>
+  );
+}
+
+function ModuleMetric({ label, value, description, tone = "neutral" }: { label: string; value: number; description: string; tone?: "neutral" | "ok" | "warn" }) {
+  return (
+    <div className={`metric ${tone}`}>
+      <Explain as="span" description={description}>{label}</Explain>
+      <strong>{formatTokenCount(value)}</strong>
+    </div>
+  );
+}
+
+function Fact({ label, value, code = false }: { label: string; value: string; code?: boolean }) {
+  return (
+    <div className="fact">
+      <span>{label}</span>
+      {code ? <code>{value}</code> : <strong>{value}</strong>}
+    </div>
+  );
+}
+
+function SkillManagerTable({ skills }: { skills: SkillManagerSkill[] }) {
+  if (skills.length === 0) return <p className="empty">没有可展示的技能。</p>;
+  return (
+    <div className="skill-manager-table">
+      <div className="skill-manager-row header">
+        <span>技能</span>
+        <span>平台</span>
+        <span>状态</span>
+        <span>验证</span>
+        <span>更新时间</span>
+      </div>
+      {skills.map((skill) => (
+        <div className="skill-manager-row" key={skill.id}>
+          <Explain as="span" className="truncate" description={describeSkillManagerSkill(skill)}>
+            {skill.name}
+          </Explain>
+          <span>{skill.platform === "codex" ? "Codex" : "Claude"}</span>
+          <span className={`skill-chip ${skill.status}`}>{skillStatusLabel(skill.status)}</span>
+          <span className={`skill-chip ${skill.validationState.toLowerCase()}`}>{skillValidationLabel(skill.validationState)}</span>
+          <span>{skill.updatedAt ? formatDate(skill.updatedAt) : "未知"}</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -552,7 +728,7 @@ export function Explain({
   const Tag = as;
   const tooltipId = useId();
   return (
-    <Tag className={`explain ${className}`} aria-describedby={tooltipId}>
+    <Tag className={`explain ${className}`} aria-describedby={tooltipId} tabIndex={0}>
       <span className="explain-label">{children}</span>
       <span className="tooltip" role="tooltip" id={tooltipId}>
         {description}
@@ -641,7 +817,7 @@ interface TokenUsageRow {
   cachedTokens: number;
   totalTokens: number;
   requestCount: number;
-  lastUsedAt: string;
+  lastUsedAt: string | null;
 }
 
 interface TokenUsageSummary {
@@ -656,18 +832,19 @@ interface TokenUsageSummary {
 export function summarizeModelTokenUsage(nodes: ResourceNode[]) {
   const models = nodes.flatMap((node): TokenUsageRow[] => {
     const usage = node.properties.tokenUsage;
-    if (node.type !== "model" || !usage || typeof usage !== "object") return [];
+    if (!usage || typeof usage !== "object") return [];
     const record = usage as Record<string, unknown>;
     const inputTokens = tokenNumber(record.inputTokens);
     const outputTokens = tokenNumber(record.outputTokens);
     const cachedTokens = tokenNumber(record.cachedTokens);
     const totalTokens = tokenNumber(record.totalTokens);
     const requestCount = tokenNumber(record.requestCount);
-    const lastUsedAt = typeof record.lastUsedAt === "string" ? record.lastUsedAt : "";
+    const lastUsedAt = typeof record.lastUsedAt === "string" ? record.lastUsedAt : null;
     const telemetryLayer = record.telemetryLayer === "provider" ? "provider" : "client";
     const source = typeof record.source === "string" ? record.source : node.sourceAdapter;
     const coverage = typeof record.coverage === "string" ? record.coverage : "unknown";
-    if (!lastUsedAt || requestCount === 0) return [];
+    const supportedNode = node.type === "model" || (node.type === "runtime" && telemetryLayer === "provider");
+    if (!supportedNode || requestCount === 0) return [];
     return [{ resourceId: node.id, label: node.label, source, telemetryLayer, coverage, inputTokens, outputTokens, cachedTokens, totalTokens, requestCount, lastUsedAt }];
   });
 
@@ -691,9 +868,38 @@ function summarizeTokenRows(models: TokenUsageRow[]): TokenUsageSummary {
 }
 
 function describeTokenCoverage(model: TokenUsageRow): string {
+  const metrics = `输入 ${formatTokenCount(model.inputTokens)}，输出 ${formatTokenCount(model.outputTokens)}，缓存 ${formatTokenCount(model.cachedTokens)}，总计 ${formatTokenCount(model.totalTokens)}，调用 ${formatTokenCount(model.requestCount)} 次，最近活动 ${model.lastUsedAt ? formatDate(model.lastUsedAt) : "未知"}。`;
   return model.telemetryLayer === "provider"
-    ? `${model.label} 的统计来自 ${model.source} 推理服务端，覆盖命中该 endpoint 的全部客户端，包括 Waku 和 headless 调用。无法仅凭服务端累计值区分具体客户端。`
-    : `${model.label} 的统计来自 ${model.source} 客户端记录，只覆盖该客户端保存的 usage，可能与服务端统计重叠。`;
+    ? `${model.label} 的统计来自 ${model.source} 推理服务端，覆盖命中该 endpoint 的全部客户端，包括 Waku 和 headless 调用。无法仅凭服务端累计值区分具体客户端。${metrics}`
+    : `${model.label} 的统计来自 ${model.source} 客户端记录，只覆盖该客户端保存的 usage，可能与服务端统计重叠。${metrics}`;
+}
+
+function describeSkillManagerSkill(skill: SkillManagerSkill): string {
+  const issueText = skill.issues.length
+    ? `验证问题：${skill.issues.map((issue) => `${issue.code} ${issue.message}`).join("；")}。`
+    : "验证未发现问题。";
+  return [
+    `${skill.name} 是 ${skill.platform === "codex" ? "Codex" : "Claude"} ${skill.scope === "user" ? "用户级" : "项目级"} skill。`,
+    `状态：${skillStatusLabel(skill.status)}。验证：${skillValidationLabel(skill.validationState)}。`,
+    skill.description ? `描述：${skill.description}。` : "没有描述。",
+    `路径：${skill.skillMdPath}。`,
+    issueText
+  ].join(" ");
+}
+
+function skillStatusLabel(status: SkillManagerSkill["status"]): string {
+  const labels: Record<SkillManagerSkill["status"], string> = {
+    enabled: "启用",
+    disabled: "禁用",
+    readonly: "只读",
+    manual_restore_candidate: "手动恢复",
+    conflict_disabled_duplicate: "禁用冲突"
+  };
+  return labels[status];
+}
+
+function skillValidationLabel(state: SkillManagerSkill["validationState"]): string {
+  return { OK: "正常", WARN: "警告", ERROR: "错误", UNKNOWN: "未知" }[state];
 }
 
 function tokenNumber(value: unknown): number {

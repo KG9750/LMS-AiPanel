@@ -57,3 +57,6 @@ CREATE TABLE IF NOT EXISTS audit_log (
   evidence_json TEXT NOT NULL,
   backup_id TEXT
 );
+
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES ('0001_initial', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));

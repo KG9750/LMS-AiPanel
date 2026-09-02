@@ -6,6 +6,7 @@ import { ensureStorage } from "../src/storage/init";
 import { getAppPaths } from "../src/storage/paths";
 import { StorageRepository } from "../src/storage/repository";
 import { GRAPH_SCHEMA_VERSION, type SystemSnapshot } from "../src/shared/schemas";
+import { execa } from "execa";
 
 let tempRoot: string | undefined;
 
@@ -20,6 +21,17 @@ describe("SQLite repository", () => {
     tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "lms-aipanel-"));
     vi.stubEnv("LMS_AIPANEL_DATA_DIR", tempRoot);
     expect(await ensureStorage()).toEqual({ ready: true });
+    expect(await ensureStorage()).toEqual({ ready: true });
+
+    const migrations = await execa("sqlite3", [
+      "-json",
+      getAppPaths().databasePath,
+      "SELECT version FROM schema_migrations ORDER BY version;"
+    ]);
+    expect(JSON.parse(migrations.stdout)).toEqual([
+      { version: "0001_initial" },
+      { version: "0002_snapshots" }
+    ]);
 
     const snapshot: SystemSnapshot = {
       nodes: [
