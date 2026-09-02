@@ -7,6 +7,7 @@ import { evaluateDrift } from "../domain/drift";
 import { redactValue } from "../domain/redaction";
 import { isStamped, stampHostId } from "../domain/scope";
 import { mergeRegistry } from "../domain/registryMerge";
+import { Scheduler } from "../domain/scheduler";
 import { createAdapters } from "../adapters";
 import { AdapterRuntime } from "../adapters/runtime";
 import { resolveCapabilityStates, type StackAdapter } from "../adapters/types";
@@ -16,6 +17,7 @@ import { ensureStorage, type InitializedStorage } from "../storage/init";
 import { getAppPaths } from "../storage/paths";
 import { getOrCreateHost } from "../storage/host";
 import { RegistryRepository } from "../storage/registry";
+import { SnapshotStore } from "../storage/snapshots";
 import { closeDatabase } from "../storage/db";
 
 export interface AppOptions {
@@ -25,6 +27,8 @@ export interface AppOptions {
   adapters?: StackAdapter[];
   /** Per-adapter collection timeout in ms. */
   timeoutMs?: number;
+  /** When false the background scheduler never auto-runs (tests). */
+  schedulerAutoStart?: boolean;
   logger?: boolean;
 }
 
@@ -34,6 +38,7 @@ export interface BuiltApp {
   host: HostRecord;
   runtime: AdapterRuntime;
   registry: RegistryRepository;
+  scheduler: Scheduler;
   close: () => Promise<void>;
 }
 
@@ -69,26 +74,22 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
 
   const runtime = new AdapterRuntime(validAdapters, options.timeoutMs ?? 5_000, host.hostId);
   const registry = new RegistryRepository(storage.db, host.hostId);
+  const snapshotStore = new SnapshotStore(storage.db);
+  const scheduler = new Scheduler(runtime, registry, snapshotStore, host, validAdapters, {
+    fastIntervalMs: 30_000,
+    slowIntervalMs: 120_000,
+    autoStart: options.schedulerAutoStart ?? true
+  });
 
-  let snapshotVersion = 1;
+  // Restore the latest persisted snapshot, then start background collection.
+  scheduler.restore();
+  scheduler.start();
+
   const auditLog: Array<Record<string, unknown>> = [];
   const appPaths = getAppPaths();
 
-  const collectSnapshot = async (): Promise<SystemSnapshot> => {
-    const collected = await runtime.collectAll();
-    const stamped = stampHostId(collected.result.nodes, host.hostId);
-    const merged = mergeRegistry(stamped, registry.list());
-    const driftRecords = evaluateDrift(merged.nodes);
-    const version = snapshotVersion++;
-    return {
-      version,
-      host,
-      nodes: merged.nodes,
-      edges: collected.result.edges,
-      adapterRuns: collected.runs,
-      driftRecords
-    };
-  };
+  /** Query path: returns the most recent COMPLETED snapshot without collecting. */
+  const latestSnapshot = (): SystemSnapshot | null => scheduler.getLatest()?.snapshot ?? null;
 
   const app = Fastify({ logger: options.logger ?? false });
 
@@ -132,43 +133,56 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
   );
 
   app.get("/api/graph", async () => {
-    try {
-      const snapshot = await collectSnapshot();
-      const unstamped = snapshot.nodes.filter((node) => !isStamped(node));
-      if (unstamped.length > 0) {
-        return envelope(
-          fail({
-            code: "UNSCOPED_RESOURCE",
-            message: `${unstamped.length} resource(s) left the runtime without host scope`
-          })
-        );
-      }
-      return envelope(ok(snapshot));
-    } catch (error) {
+    const snapshot = latestSnapshot();
+    if (!snapshot) {
+      // First run before any collection finished: kick off one collection.
+      const collected = await scheduler.collect("all");
+      return envelope(ok(collected.snapshot));
+    }
+    const unstamped = snapshot.nodes.filter((node) => !isStamped(node));
+    if (unstamped.length > 0) {
       return envelope(
         fail({
-          code: "GRAPH_COLLECT_FAILED",
-          message: error instanceof Error ? error.message : String(error)
+          code: "UNSCOPED_RESOURCE",
+          message: `${unstamped.length} resource(s) left the runtime without host scope`
         })
       );
     }
+    return envelope(ok(snapshot));
   });
 
   app.get("/api/resources", async () => {
-    const snapshot = await collectSnapshot();
-    return envelope(ok(snapshot.nodes));
+    const snapshot = latestSnapshot();
+    return envelope(ok(snapshot ? snapshot.nodes : []));
   });
 
   app.get("/api/drift", async () => {
-    const snapshot = await collectSnapshot();
-    return envelope(ok(snapshot.driftRecords));
+    const snapshot = latestSnapshot();
+    return envelope(ok(snapshot ? snapshot.driftRecords : []));
+  });
+
+  /** Manual refresh: returns immediately with the run id; issue #5 streams progress. */
+  app.post("/api/refresh", async () => {
+    const runId = `refresh:${nanoid()}`;
+    void scheduler.collect("all").then(() => {
+      auditLog.push({
+        id: `audit:${nanoid()}`,
+        timestamp: new Date().toISOString(),
+        actor: "local-user",
+        action: "refresh",
+        resourceId: runId,
+        result: "completed"
+      });
+    });
+    return envelope(ok({ runId, status: "started" }));
   });
 
   // ---- Managed Resource Registry (issue #3) ----
 
   app.get("/api/registry", async () => {
-    const snapshot = await collectSnapshot();
-    const merged = mergeRegistry(snapshot.nodes, registry.list());
+    const snapshot = latestSnapshot();
+    const nodes = snapshot ? snapshot.nodes : [];
+    const merged = mergeRegistry(nodes, registry.list());
     return envelope(
       ok({
         entries: registry.list(),
@@ -335,7 +349,9 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
     host,
     runtime,
     registry,
+    scheduler,
     close: async () => {
+      scheduler.stop();
       await app.close();
       closeDatabase(storage.db);
     }

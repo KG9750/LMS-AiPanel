@@ -36,6 +36,23 @@ export class AdapterRuntime {
     };
   }
 
+  /** Collects only the given adapter ids (scheduler refresh profiles). */
+  async collectSelected(adapterIds: string[]): Promise<AdapterRuntimeResult> {
+    const selected = this.adapters.filter((adapter) => adapterIds.includes(adapter.id));
+    const results = await Promise.all(selected.map((adapter) => this.runAdapter(adapter)));
+    return {
+      result: {
+        nodes: stampHostId(
+          results.flatMap((item) => item.result.nodes),
+          this.hostId
+        ),
+        edges: results.flatMap((item) => item.result.edges),
+        redactionHints: results.flatMap((item) => item.result.redactionHints)
+      },
+      runs: results.map((item) => item.run)
+    };
+  }
+
   getLastRuns(): AdapterRun[] {
     return Array.from(this.lastRuns.values());
   }
