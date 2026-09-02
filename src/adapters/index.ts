@@ -1,4 +1,5 @@
 import type { StackAdapter } from "./types";
+import { AssistantAdapter } from "./assistantAdapter";
 import { ClaudeConfigAdapter } from "./claudeConfigAdapter";
 import { CodexConfigAdapter } from "./codexConfigAdapter";
 import { DockerAdapter } from "./dockerAdapter";
@@ -14,6 +15,7 @@ import { SkillsAdapter } from "./skillsAdapter";
 
 export function createAdapters(): StackAdapter[] {
   return [
+    new AssistantAdapter(),
     new ClaudeConfigAdapter(),
     new CodexConfigAdapter(),
     new DockerAdapter(),
