@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
@@ -25,6 +26,7 @@ import { RefreshRunStore } from "../storage/refreshRuns";
 import { MetricStore, type MetricLayer } from "../storage/metrics";
 import { SessionStore, type LocalSession } from "../storage/sessions";
 import { ActionRunStore } from "../storage/actionRuns";
+import { ConfigCenter } from "../domain/configCenter";
 import { closeDatabase } from "../storage/db";
 
 export interface AppOptions {
@@ -34,6 +36,8 @@ export interface AppOptions {
   port?: number;
   /** Session TTL in ms for tests (default 5 minutes). */
   sessionTtlMs?: number;
+  /** Default config file path for the Config Center preview. */
+  configPath?: string;
   /** Injectable adapters for tests. Defaults to the real read-only adapters. */
   adapters?: StackAdapter[];
   /** Per-adapter collection timeout in ms. */
@@ -729,6 +733,129 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
       }
     }
     return envelope(ok({ reverified: results.length, results }));
+  });
+
+  // ---- Config Center (issue #19): preview / diff / apply / verify ----
+
+  const configCenter = new ConfigCenter(storage.db, host.hostId);
+
+  /** Reads a structured preview of the supported config file. */
+  app.get<{ Querystring: { path?: string } }>("/api/config/preview", async (request) => {
+    const filePath = request.query.path ?? options.configPath ?? "";
+    if (!filePath) {
+      return envelope(fail({ code: "CONFIG_PATH_REQUIRED", message: "config path is required" }));
+    }
+    try {
+      const preview = await configCenter.readPreview(filePath);
+      return envelope(ok(preview));
+    } catch (error) {
+      return envelope(
+        fail({
+          code: "CONFIG_READ_FAILED",
+          message: error instanceof Error ? error.message : String(error)
+        })
+      );
+    }
+  });
+
+  /** Raw diff between the current file and the proposed edit. */
+  app.post<{ Body: { path?: string; content?: string } }>("/api/config/diff", async (request) => {
+    const filePath = request.body.path ?? "";
+    const content = request.body.content ?? "";
+    try {
+      const current = await fs.readFile(filePath, "utf8");
+      const preview = await configCenter.readPreview(filePath);
+      const diff = configCenter.diff(current, content);
+      return envelope(ok({ diff, previewHash: preview.previewHash, fresh: await configCenter.previewIsFresh(preview) }));
+    } catch (error) {
+      return envelope(fail({ code: "CONFIG_DIFF_FAILED", message: error instanceof Error ? error.message : String(error) }));
+    }
+  });
+
+  /** Applies the edit: external-change guard, backup, atomic replace, verify. */
+  app.post<{ Body: { path?: string; content?: string; previewHash?: string } }>("/api/config/apply", async (request) => {
+    if (!requireWrite(request)) {
+      return envelope(
+        fail({
+          code: "WRITE_GUARD_REJECTED",
+          message: "Config apply requires a valid local session from an allowed origin"
+        })
+      );
+    }
+    const filePath = request.body.path ?? "";
+    const content = request.body.content ?? "";
+    const previewHash = request.body.previewHash ?? "";
+    try {
+      const preview = await configCenter.readPreview(filePath);
+      if (preview.previewHash !== previewHash) {
+        return envelope(
+          fail({
+            code: "PREVIEW_STALE",
+            message: "preview hash mismatch; the file changed since preview"
+          })
+        );
+      }
+      // Every apply creates ActionRun + audit evidence.
+      const run = actionRuns.create({
+        actionPlanId: `config:apply:${nanoid(6)}`,
+        resourceId: filePath,
+        adapterId: "config-center",
+        action: "configure",
+        evidence: ["config apply requested"],
+        requiresRollback: true
+      });
+      const outcome = await configCenter.apply(preview, content, run.runId);
+      const updated = actionRuns.update(run.runId, {
+        status: outcome.ok ? "succeeded" : "failed",
+        finishedAt: new Date().toISOString(),
+        evidence: [...run.evidence, ...outcome.evidence],
+        error: outcome.error,
+        requiresRollback: !outcome.ok
+      })!;
+      auditLog.push({
+        id: `audit:${nanoid()}`,
+        timestamp: new Date().toISOString(),
+        actor: "local-user",
+        action: "config:apply",
+        resourceId: filePath,
+        result: outcome.ok ? "succeeded" : "failed",
+        evidence: outcome.evidence,
+        backupId: outcome.backup.id
+      });
+      return envelope(ok({ ok: outcome.ok, run: updated, evidence: outcome.evidence, backupId: outcome.backup.id }));
+    } catch (error) {
+      return envelope(
+        fail({
+          code: "CONFIG_APPLY_FAILED",
+          message: error instanceof Error ? error.message : String(error)
+        })
+      );
+    }
+  });
+
+  /** Backup history and restore (rollback path). */
+  app.get("/api/config/backups", async () => envelope(ok(configCenter.listBackups(20))));
+  app.post<{ Params: { id: string } }>("/api/config/backups/:id/restore", async (request) => {
+    if (!requireWrite(request)) {
+      return envelope(
+        fail({
+          code: "WRITE_GUARD_REJECTED",
+          message: "Config restore requires a valid local session"
+        })
+      );
+    }
+    const restored = await configCenter.restore(request.params.id);
+    if (!restored) return envelope(fail({ code: "NOT_FOUND", message: `No backup ${request.params.id}` }));
+    auditLog.push({
+      id: `audit:${nanoid()}`,
+      timestamp: new Date().toISOString(),
+      actor: "local-user",
+      action: "config:restore",
+      resourceId: restored.filePath,
+      result: "restored",
+      backupId: restored.id
+    });
+    return envelope(ok({ restored: true, filePath: restored.filePath }));
   });
 
   app.get("/api/audit", async () => envelope(ok(auditLog)));
