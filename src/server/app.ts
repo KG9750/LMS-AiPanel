@@ -1,5 +1,5 @@
 import path from "node:path";
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
 import { nanoid } from "nanoid";
 import { createDisabledControlPlan, createReadPlan } from "../domain/actionGateway";
@@ -22,11 +22,16 @@ import { RegistryRepository } from "../storage/registry";
 import { SnapshotStore } from "../storage/snapshots";
 import { RefreshRunStore } from "../storage/refreshRuns";
 import { MetricStore, type MetricLayer } from "../storage/metrics";
+import { SessionStore, type LocalSession } from "../storage/sessions";
 import { closeDatabase } from "../storage/db";
 
 export interface AppOptions {
   /** Overrides LMS_AIPANEL_DATA_DIR. Defaults to the env var or the platform path. */
   dataDir?: string;
+  /** Port used to build allowed local origins. Defaults to LMS_AIPANEL_PORT. */
+  port?: number;
+  /** Session TTL in ms for tests (default 5 minutes). */
+  sessionTtlMs?: number;
   /** Injectable adapters for tests. Defaults to the real read-only adapters. */
   adapters?: StackAdapter[];
   /** Per-adapter collection timeout in ms. */
@@ -52,6 +57,7 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
   if (options.dataDir) {
     process.env.LMS_AIPANEL_DATA_DIR = options.dataDir;
   }
+  const port = options.port ?? Number(process.env.LMS_AIPANEL_PORT ?? 3777);
   const storage = await ensureStorage();
   const host = getOrCreateHost(storage.db);
 
@@ -95,6 +101,29 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
   const sseHub = new SseHub();
   const refresher = new RefreshOrchestrator(refreshStore, scheduler, sseHub, host.hostId);
   const metrics = new MetricStore(storage.db);
+  const sessions = new SessionStore(storage.db, host.hostId, options.sessionTtlMs);
+
+  /** Allowed browser origins for write requests (issue #16). */
+  const allowedOrigins = new Set([
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+    `http://127.0.0.1:${port}`,
+    `http://localhost:${port}`
+  ]);
+
+  /** Origin Guard: rejects writes from disallowed origins (CSRF boundary). */
+  const originGuard = (request: FastifyRequest): string | null => {
+    const origin = request.headers.origin;
+    if (!origin) return null; // CLI / non-browser clients carry no Origin header
+    if (allowedOrigins.has(origin)) return null;
+    return origin;
+  };
+
+  /** Session Guard: write endpoints require a valid short-lived session. */
+  const sessionGuard = (request: FastifyRequest): LocalSession | null => {
+    const token = request.headers["x-lms-session"] as string | undefined;
+    return sessions.verify(token);
+  };
 
   const auditLog: Array<Record<string, unknown>> = [];
   const appPaths = getAppPaths();
@@ -142,6 +171,58 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
       })
     )
   );
+
+  // ---- Local write session + Origin Guard (issue #16) ----
+
+  /** Issues a short-lived local write session for browser writes. */
+  app.post("/api/session", async (request) => {
+    const badOrigin = originGuard(request);
+    if (badOrigin) {
+      return envelope(
+        fail({
+          code: "ORIGIN_DISALLOWED",
+          message: `Origin ${badOrigin} is not allowed to issue sessions`
+        })
+      );
+    }
+    const session = sessions.issue("write");
+    auditLog.push({
+      id: `audit:${nanoid()}`,
+      timestamp: new Date().toISOString(),
+      actor: "local-user",
+      action: "session:issue",
+      resourceId: session.token.slice(0, 12),
+      result: "issued"
+    });
+    // The issued session credential must reach the caller intact: it is the
+    // one secret that is intentionally NOT redacted at this boundary.
+    const raw: ApiEnvelope<{ token: string; expiresAt: string; purpose: string }> = ok({
+      token: session.token,
+      expiresAt: session.expiresAt,
+      purpose: session.purpose
+    });
+    return { ...raw, meta: { ...raw.meta, hostId: host.hostId } };
+  });
+
+  app.post("/api/session/revoke", async (request) => {
+    const token = (request.headers["x-lms-session"] as string | undefined) ?? "";
+    sessions.revoke(token);
+    return envelope(ok({ revoked: true }));
+  });
+
+  app.get("/api/session/status", async (request) => {
+    const session = sessionGuard(request);
+    return envelope(ok({ valid: Boolean(session), expiresAt: session?.expiresAt ?? null }));
+  });
+
+  /** Guards a write-capable route: session + origin checks. */
+  const requireWrite = (request: FastifyRequest): LocalSession | null => {
+    const badOrigin = originGuard(request);
+    if (badOrigin) {
+      return null;
+    }
+    return sessionGuard(request);
+  };
 
   app.get("/api/graph", async () => {
     const snapshot = latestSnapshot();
@@ -299,6 +380,14 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
   });
 
   app.post<{ Body: Partial<RegistryEntry> }>("/api/registry", async (request) => {
+    if (!requireWrite(request)) {
+      return envelope(
+        fail({
+          code: "WRITE_GUARD_REJECTED",
+          message: "Registry writes require a valid local session from an allowed origin"
+        })
+      );
+    }
     const parsed = registryEntrySchema.omit({ id: true, hostId: true, createdAt: true, updatedAt: true }).safeParse(request.body);
     if (!parsed.success) {
       return envelope(
@@ -321,6 +410,14 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
   });
 
   app.put<{ Params: { id: string }; Body: Partial<RegistryEntry> }>("/api/registry/:id", async (request) => {
+    if (!requireWrite(request)) {
+      return envelope(
+        fail({
+          code: "WRITE_GUARD_REJECTED",
+          message: "Registry writes require a valid local session from an allowed origin"
+        })
+      );
+    }
     const parsed = registryEntrySchema
       .omit({ id: true, hostId: true, createdAt: true, updatedAt: true })
       .partial()
@@ -349,6 +446,14 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
   });
 
   app.delete<{ Params: { id: string } }>("/api/registry/:id", async (request) => {
+    if (!requireWrite(request)) {
+      return envelope(
+        fail({
+          code: "WRITE_GUARD_REJECTED",
+          message: "Registry writes require a valid local session from an allowed origin"
+        })
+      );
+    }
     const removed = registry.remove(request.params.id);
     if (!removed) {
       return envelope(fail({ code: "NOT_FOUND", message: `No registry entry ${request.params.id}` }));

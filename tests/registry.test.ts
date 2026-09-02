@@ -108,13 +108,21 @@ describe("registry merge", () => {
 });
 
 describe("registry API", () => {
+  async function withSession(built: { app: import("fastify").FastifyInstance }): Promise<string> {
+    const issue = await built.app.inject({ method: "POST", url: "/api/session" });
+    return issue.json().data.token as string;
+  }
+
   it("CRUD + merge states round-trip through the API", async () => {
     const built = await buildApp({ dataDir: path.join(tmpDir, "api") });
+    const token = await withSession(built);
+    const auth = { "x-lms-session": token };
 
     // Create a match entry.
     const create = await built.app.inject({
       method: "POST",
       url: "/api/registry",
+      headers: auth,
       payload: {
         kind: "match",
         adapterId: "omlx",
@@ -133,6 +141,7 @@ describe("registry API", () => {
     const update = await built.app.inject({
       method: "PUT",
       url: `/api/registry/${created.id}`,
+      headers: auth,
       payload: { managed: false }
     });
     expect(update.json().data.managed).toBe(false);
@@ -145,7 +154,7 @@ describe("registry API", () => {
     expect(Array.isArray(body.data.attention)).toBe(true);
 
     // Delete.
-    const del = await built.app.inject({ method: "DELETE", url: `/api/registry/${created.id}` });
+    const del = await built.app.inject({ method: "DELETE", url: `/api/registry/${created.id}`, headers: auth });
     expect(del.json().data.deleted).toBe(true);
     const after = await built.app.inject({ method: "GET", url: "/api/registry" });
     expect(after.json().data.entries).toHaveLength(0);
@@ -155,9 +164,11 @@ describe("registry API", () => {
 
   it("rejects invalid registry entries with a contract error", async () => {
     const built = await buildApp({ dataDir: path.join(tmpDir, "api2") });
+    const token = await withSession(built);
     const res = await built.app.inject({
       method: "POST",
       url: "/api/registry",
+      headers: { "x-lms-session": token },
       payload: { kind: "nonsense", resourceType: "runtime", stableKey: "", label: "" }
     });
     expect(res.json().ok).toBe(false);
