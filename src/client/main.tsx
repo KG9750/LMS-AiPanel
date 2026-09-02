@@ -16,6 +16,7 @@ import type {
 } from "../shared/schemas";
 import { HostBadge, type HostInfo } from "./hostBadge";
 import { ResourceDetail } from "./resourceDetail";
+import { buildOperations } from "./operations";
 import "./styles.css";
 
 const queryClient = new QueryClient();
@@ -251,6 +252,9 @@ function App() {
   const totals = summarize(snapshot);
   const driftPriority = snapshot.driftRecords.slice(0, 8);
 
+  // Problem-driven operations workspace (issue #13): attention items first.
+  const operations = buildOperations(snapshot);
+
   const { data: hostInfo } = useQuery({
     queryKey: ["host"],
     queryFn: async (): Promise<HostInfo> => {
@@ -294,6 +298,75 @@ function App() {
             <button onClick={() => void refetch()}>{isFetching ? "正在刷新" : "刷新快照"}</button>
           </div>
         </header>
+
+        <section className="operations">
+          <div className="panel attention-panel">
+            <div className="panel-head">
+              <h2>
+                <Explain description="注意力项按严重度排序：不可达资源、配置/运行漂移、采集失败、可用升级建议。它们是运维工作台的首要关注点。">
+                  注意力项
+                </Explain>
+              </h2>
+              <span>{operations.attention.length} 项</span>
+            </div>
+            {operations.attention.length === 0 ? (
+              <p className="empty">没有需要关注的项目。</p>
+            ) : (
+              <div className="attention-list">
+                {operations.attention.map((item, index) => (
+                  <div className={`attention ${item.severity}`} key={index} onClick={() => openDetail(item.resourceId)}>
+                    <span className="attention-sev">{item.severity === "critical" ? "严重" : item.severity === "warning" ? "警告" : "信息"}</span>
+                    <strong>{item.title}</strong>
+                    <small>{item.detail}</small>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="panel running-panel">
+            <div className="panel-head">
+              <h2>
+                <Explain description="运行中的本地模型、运行时和助手，显示当前证据与资源占用（可用时）。">
+                  运行中
+                </Explain>
+              </h2>
+              <span>{operations.running.length}</span>
+            </div>
+            <div className="running-list">
+              {operations.running.length === 0 && <p className="empty">没有运行中的推理组件。</p>}
+              {operations.running.map((node) => (
+                <div className="running-item" key={node.id} onClick={() => openDetail(node.id)}>
+                  <strong>{node.label}</strong>
+                  <small>{node.type} · {node.sourceAdapter}</small>
+                  {node.properties.processMemoryKb != null && (
+                    <code>{(Number(node.properties.processMemoryKb) / 1024).toFixed(0)} MB</code>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="panel activity-panel">
+            <div className="panel-head">
+              <h2>
+                <Explain description="最近的 RefreshRun 与 ActionRun 活动，以及最近变化的资源。">
+                  最近活动
+                </Explain>
+              </h2>
+              <span>{operations.activity.length} 条</span>
+            </div>
+            <div className="activity-list">
+              {operations.activity.length === 0 && <p className="empty">暂无活动记录。</p>}
+              {operations.activity.map((item, index) => (
+                <div className="activity-item" key={index}>
+                  <span className={`activity-kind ${item.kind}`}>{item.kind}</span>
+                  <small>{item.text}</small>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
 
         <section className="metrics">
           <Metric metric="resources" value={snapshot.nodes.length} />
