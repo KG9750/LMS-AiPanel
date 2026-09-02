@@ -59,7 +59,7 @@ describe("MLX Server adapter", () => {
     const endpoint = result.nodes.find((n) => n.id === "mlx-server:endpoint:1")!;
     expect(endpoint.properties.endpointVerified).toBe(false);
     expect(["stopped", "unknown"]).toContain(endpoint.state);
-    (endpoint.properties.evidence as string[]).some((e: string) => e.includes("not reachable") || e.includes("not verified"))).toBe(true);
+    expect((endpoint.properties.evidence as string[]).some((e: string) => e.includes("not reachable") || e.includes("not verified"))).toBe(true);
   });
 });
 
@@ -144,7 +144,7 @@ describe("Ollama adapter", () => {
     expect(result.nodes.length).toBeGreaterThan(0);
     const endpoint = result.nodes.find((n) => n.id === "ollama:endpoint:1")!;
     expect(endpoint.properties.apiReachable).toBe(false);
-    (endpoint.properties.evidence as string[]).some((e: string) => e.includes("api=unreachable"))).toBe(true);
+    expect((endpoint.properties.evidence as string[]).some((e: string) => e.includes("api=unreachable"))).toBe(true);
   });
 
   it("records API, process, and endpoint evidence independently", async () => {
