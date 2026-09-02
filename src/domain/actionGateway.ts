@@ -1,11 +1,14 @@
 import { nanoid } from "nanoid";
-import type { ActionPlan } from "../shared/schemas";
+import type { ActionPlan, ActionPlanRequest } from "../shared/schemas";
 
-export function createDisabledControlPlan(resourceId: string, action: string): ActionPlan {
+export function createDisabledControlPlan(
+  resourceId: string,
+  action: Exclude<ActionPlanRequest["action"], "read">
+): ActionPlan {
   return {
     actionId: `action:${nanoid()}`,
     resourceId,
-    type: "dry-run",
+    type: action,
     dryRunCommands: [`# ${action} is intentionally disabled in MVP`],
     affectedResources: [resourceId],
     requiresConfirm: true,
@@ -29,4 +32,3 @@ export function createReadPlan(resourceId: string): ActionPlan {
     riskLevel: "low"
   };
 }
-

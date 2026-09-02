@@ -66,7 +66,7 @@ button {
   padding: 0 10px;
   border-radius: 8px;
   text-align: left;
-  cursor: default;
+  cursor: pointer;
 }
 
 .nav.active {
@@ -222,16 +222,24 @@ button {
   bottom: auto;
 }
 
-.explain:hover .tooltip,
-.explain:focus-visible .tooltip {
+.explain:hover .tooltip {
   display: block;
   opacity: 1;
   transform: translateY(0);
 }
 
-.explain:focus-visible {
-  border-radius: 6px;
-  box-shadow: 0 0 0 3px rgba(14, 102, 91, 0.18);
+.mobile-nav {
+  display: none;
+}
+
+.stale-resource {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 8px,
+    rgba(183, 106, 0, 0.05) 8px,
+    rgba(183, 106, 0, 0.05) 16px
+  );
 }
 
 .metrics {
@@ -400,6 +408,11 @@ button {
   width: 100%;
 }
 
+.map-node .explain-label {
+  overflow: visible;
+  overflow-wrap: anywhere;
+}
+
 .map-node small {
   color: #718091;
 }
@@ -465,6 +478,26 @@ button {
 
   .sidebar {
     display: none;
+  }
+
+  .mobile-nav {
+    display: grid;
+    gap: 6px;
+    margin-bottom: 16px;
+    color: #536574;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .mobile-nav select {
+    width: 100%;
+    min-height: 40px;
+    border: 1px solid #b9c8d4;
+    border-radius: 7px;
+    background: #ffffff;
+    color: #152535;
+    padding: 0 10px;
+    font: inherit;
   }
 
   .main {

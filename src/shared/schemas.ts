@@ -114,6 +114,13 @@ export const driftRecordSchema = z.object({
 
 export const actionTypeSchema = z.enum(["read", "dry-run", "configure"]);
 
+export const actionPlanRequestSchema = z
+  .object({
+    resourceId: z.string().min(1),
+    action: actionTypeSchema
+  })
+  .strict();
+
 export const actionPlanSchema = z.object({
   actionId: z.string().min(1),
   resourceId: z.string().min(1),
@@ -158,6 +165,7 @@ export type RedactionHint = z.infer<typeof redactionHintSchema>;
 export type AdapterResult = z.infer<typeof adapterResultSchema>;
 export type DriftRecord = z.infer<typeof driftRecordSchema>;
 export type ActionPlan = z.infer<typeof actionPlanSchema>;
+export type ActionPlanRequest = z.infer<typeof actionPlanRequestSchema>;
 export type ApiError = z.infer<typeof apiErrorSchema>;
 export type ApiMeta = z.infer<typeof apiMetaSchema>;
 export type SystemSnapshot = z.infer<typeof systemSnapshotSchema>;
@@ -165,4 +173,3 @@ export type SystemSnapshot = z.infer<typeof systemSnapshotSchema>;
 export type ApiEnvelope<T> =
   | { ok: true; data: T; meta: ApiMeta }
   | { ok: false; error: ApiError; meta: ApiMeta };
-

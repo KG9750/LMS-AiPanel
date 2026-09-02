@@ -8,26 +8,27 @@ export class ClaudeConfigAdapter implements StackAdapter {
   name = "Claude Code";
   private lastError: string | undefined;
 
+  constructor(private readonly configRoot = homePath(".claude")) {}
+
   async collect(_context: AdapterContext): Promise<AdapterResult> {
     const root = node(this.id, "tool", "claude-code", "Claude Code", "ok", {
       evidence: ["~/.claude configuration scan"]
     });
     const nodes = [root];
     const edges = [];
-    const redactionHints = [];
 
     const files = [
-      { key: "user-settings", file: homePath(".claude", "settings.json") },
-      { key: "local-settings", file: homePath(".claude", "settings.local.json") },
-      { key: "claude-md", file: homePath(".claude", "CLAUDE.md") },
-      { key: "anthropic-router", file: homePath(".claude", "anthropic_model_router.py") }
+      { key: "user-settings", file: path.join(this.configRoot, "settings.json") },
+      { key: "local-settings", file: path.join(this.configRoot, "settings.local.json") },
+      { key: "claude-md", file: path.join(this.configRoot, "CLAUDE.md") },
+      { key: "anthropic-router", file: path.join(this.configRoot, "anthropic_model_router.py") }
     ];
 
     for (const item of files) {
       const exists = await pathExists(item.file);
       const configNode = node(this.id, "config", item.key, path.basename(item.file), exists ? "ok" : "unknown", {
         exists,
-        pathHint: `~/.claude/${path.basename(item.file)}`,
+        pathHint: path.join("~/.claude", path.basename(item.file)),
         evidence: [`exists=${exists}`]
       });
       nodes.push(configNode);
@@ -45,11 +46,10 @@ export class ClaudeConfigAdapter implements StackAdapter {
       });
       nodes.push(modelNode);
       edges.push(edge(root.id, "uses", modelNode.id));
-      redactionHints.push({ resourceId: modelNode.id, path: ["properties", "baseUrl"], reason: "endpoint" });
     }
 
     this.lastError = undefined;
-    return { nodes, edges, redactionHints };
+    return { nodes, edges, redactionHints: [] };
   }
 
   async health(): Promise<HealthStatus> {
@@ -60,4 +60,3 @@ export class ClaudeConfigAdapter implements StackAdapter {
     };
   }
 }
-

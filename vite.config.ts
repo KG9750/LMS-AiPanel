@@ -3,6 +3,7 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [react()],
+  cacheDir: "/tmp/lms-aipanel-vite-cache",
   server: {
     host: "127.0.0.1",
     port: 5173,
@@ -11,7 +12,7 @@ export default defineConfig({
     }
   },
   build: {
-    outDir: "dist/client"
+    outDir: "dist/client",
+    emptyOutDir: false
   }
 });
-

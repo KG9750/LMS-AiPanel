@@ -9,7 +9,7 @@ interface OpenWebUIModelRow {
   id: string;
   name: string;
   is_active: number;
-  meta_preview?: string;
+  meta?: string;
 }
 
 export class OpenWebUIAdapter implements StackAdapter {
@@ -32,10 +32,10 @@ export class OpenWebUIAdapter implements StackAdapter {
     }
 
     try {
-      const query =
-        "select id,name,is_active,substr(meta,1,300) as meta_preview from model order by updated_at desc limit 50;";
+      const query = "select id,name,is_active,meta from model order by updated_at desc limit 50;";
       const { stdout } = await execa("sqlite3", ["-json", DB_PATH, query], {
-        timeout: context.timeoutMs
+        timeout: context.timeoutMs,
+        cancelSignal: context.signal
       });
       const rows = stdout.trim() ? (JSON.parse(stdout) as OpenWebUIModelRow[]) : [];
       root.state = "ok";
@@ -43,7 +43,7 @@ export class OpenWebUIAdapter implements StackAdapter {
         const modelNode = node(this.id, "model", row.id, row.name || row.id, row.is_active ? "ok" : "stopped", {
           openWebUIId: row.id,
           isActive: Boolean(row.is_active),
-          metaPreview: row.meta_preview,
+          ...summarizeMeta(row.meta),
           evidence: [`is_active=${row.is_active}`]
         });
         nodes.push(modelNode);
@@ -61,5 +61,20 @@ export class OpenWebUIAdapter implements StackAdapter {
 
   async health(): Promise<HealthStatus> {
     return { adapterId: this.id, alive: this.lastError === undefined, lastError: this.lastError };
+  }
+}
+
+export function summarizeMeta(raw: string | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const meta = JSON.parse(raw) as Record<string, unknown>;
+    const summary: Record<string, unknown> = {};
+    if (typeof meta.description === "string") summary.description = meta.description;
+    if (Array.isArray(meta.capabilities)) {
+      summary.capabilities = meta.capabilities.filter((item): item is string => typeof item === "string").slice(0, 20);
+    }
+    return summary;
+  } catch {
+    return {};
   }
 }

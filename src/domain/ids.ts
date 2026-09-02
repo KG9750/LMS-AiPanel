@@ -1,7 +1,5 @@
-import { createHash } from "node:crypto";
-
-export function stableHash(input: string): string {
-  return createHash("sha256").update(input).digest("hex").slice(0, 16);
+export function stableKey(input: string): string {
+  return Buffer.from(input, "utf8").toString("base64url");
 }
 
 export function resourceId(adapter: string, type: string, stableKey: string): string {
@@ -9,6 +7,5 @@ export function resourceId(adapter: string, type: string, stableKey: string): st
 }
 
 export function edgeId(source: string, relation: string, target: string): string {
-  return `edge:${stableHash(`${source}|${relation}|${target}`)}`;
+  return `edge:${stableKey(`${source}|${relation}|${target}`)}`;
 }
-

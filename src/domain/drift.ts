@@ -6,6 +6,9 @@ export function evaluateDrift(nodes: ResourceNode[]): DriftRecord[] {
 
   return nodes
     .map((node): DriftRecord | null => {
+      const configured = node.properties.configured === true;
+      if (!configured) return null;
+
       if (node.state === "error") {
         return {
           id: `drift:${nanoid()}`,
@@ -13,7 +16,8 @@ export function evaluateDrift(nodes: ResourceNode[]): DriftRecord[] {
           status: "unreachable",
           configured: {
             label: node.label,
-            type: node.type
+            type: node.type,
+            configured: true
           },
           live: {
             state: node.state
@@ -31,7 +35,8 @@ export function evaluateDrift(nodes: ResourceNode[]): DriftRecord[] {
           status: "unknown",
           configured: {
             label: node.label,
-            type: node.type
+            type: node.type,
+            configured: true
           },
           live: {
             state: node.state
@@ -42,14 +47,15 @@ export function evaluateDrift(nodes: ResourceNode[]): DriftRecord[] {
         };
       }
 
-      if (node.state === "stopped" && ["runtime", "container", "process", "port"].includes(node.type)) {
+      if (node.state === "stopped") {
         return {
           id: `drift:${nanoid()}`,
           resourceId: node.id,
           status: "drift-runtime",
           configured: {
             label: node.label,
-            type: node.type
+            type: node.type,
+            configured: true
           },
           live: {
             state: node.state
@@ -72,4 +78,3 @@ function evidenceFromNode(node: ResourceNode, fallback: string): string[] {
   }
   return [fallback, `resource=${node.id}`];
 }
-

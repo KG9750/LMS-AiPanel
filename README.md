@@ -9,10 +9,12 @@ This repository contains the first runnable foundation:
 - React/Vite/TypeScript UI
 - Fastify API with a uniform envelope
 - Resource Graph schemas
-- Adapter Runtime with timeout and failure isolation
+- Adapter Runtime with cancellation, single-flight refresh, stale fallback, and failure isolation
 - Read-only adapters for Claude, Codex, Docker, Open WebUI, LaunchAgents, local models, skills, and MCP config candidates
 - Drift detection for configured-vs-live MVP signals
 - Action execution disabled by default; action planning only
+- SQLite persistence for redacted snapshots and audit entries
+- Chinese resource filters and detailed hover descriptions
 
 ## Run
 
@@ -40,6 +42,14 @@ npm test
 npm run build
 ```
 
+Optional path-delimited discovery overrides:
+
+```text
+LMS_AIPANEL_MODEL_ROOTS
+LMS_AIPANEL_SKILL_ROOTS
+LMS_AIPANEL_MCP_CONFIGS
+```
+
 ## Runtime Data
 
 Runtime state belongs outside the repository:
@@ -47,4 +57,3 @@ Runtime state belongs outside the repository:
 ```text
 ~/Library/Application Support/LMS-AiPanel
 ```
-

@@ -3,6 +3,7 @@ import type { AdapterResult, AdapterRun } from "../shared/schemas";
 export interface AdapterContext {
   now: () => Date;
   timeoutMs: number;
+  signal: AbortSignal;
 }
 
 export interface HealthStatus {
@@ -23,4 +24,3 @@ export interface AdapterRuntimeResult {
   result: AdapterResult;
   runs: AdapterRun[];
 }
-

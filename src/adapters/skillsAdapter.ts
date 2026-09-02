@@ -2,12 +2,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { AdapterResult } from "../shared/schemas";
 import type { AdapterContext, HealthStatus, StackAdapter } from "./types";
-import { edge, homePath, node } from "./helpers";
+import { edge, node, pathExists, pathKey } from "./helpers";
 
 export class SkillsAdapter implements StackAdapter {
   id = "skills";
   name = "Codex Skills";
   private lastError: string | undefined;
+
+  constructor(private readonly skillRoots: string[]) {}
 
   async collect(_context: AdapterContext): Promise<AdapterResult> {
     const root = node(this.id, "tool", "codex-skills", "Codex Skills", "unknown", {
@@ -17,27 +19,37 @@ export class SkillsAdapter implements StackAdapter {
     const edges = [];
 
     try {
-      const skillsRoot = homePath(".codex", "skills");
-      const entries = await fs.readdir(skillsRoot, { withFileTypes: true });
-      root.state = "ok";
-      for (const entry of entries.filter((item) => item.isDirectory())) {
-        const skillMd = path.join(skillsRoot, entry.name, "SKILL.md");
-        let description = "";
+      let scanError: string | undefined;
+      for (const skillsRoot of this.skillRoots) {
+        if (!(await pathExists(skillsRoot))) continue;
+        let entries;
         try {
-          const text = await fs.readFile(skillMd, "utf8");
-          description = extractDescription(text);
-        } catch {
-          description = "";
+          entries = await fs.readdir(skillsRoot, { withFileTypes: true });
+          root.state = "ok";
+        } catch (error) {
+          scanError ??= error instanceof Error ? error.message : String(error);
+          continue;
         }
-        const skillNode = node(this.id, "skill", entry.name, entry.name, description ? "ok" : "unknown", {
-          description,
-          pathHint: `~/.codex/skills/${entry.name}/SKILL.md`,
-          evidence: [description ? "SKILL.md parsed" : "SKILL.md missing or unreadable"]
-        });
-        nodes.push(skillNode);
-        edges.push(edge(root.id, "owns", skillNode.id));
+        for (const entry of entries.filter((item) => item.isDirectory())) {
+          const skillMd = path.join(skillsRoot, entry.name, "SKILL.md");
+          let description = "";
+          try {
+            const text = await fs.readFile(skillMd, "utf8");
+            description = extractDescription(text);
+          } catch {
+            description = "";
+          }
+          const skillNode = node(this.id, "skill", `${pathKey(skillsRoot)}:${entry.name}`, entry.name, description ? "ok" : "unknown", {
+            description,
+            source: path.basename(path.dirname(skillsRoot)),
+            evidence: [description ? "SKILL.md parsed" : "SKILL.md missing or unreadable"]
+          });
+          nodes.push(skillNode);
+          edges.push(edge(root.id, "owns", skillNode.id));
+        }
       }
-      this.lastError = undefined;
+      if (scanError && root.state === "ok") root.state = "warning";
+      this.lastError = scanError;
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error);
       root.state = "unknown";
@@ -61,4 +73,3 @@ function extractDescription(text: string): string {
     ?.trim()
     .slice(0, 180) ?? "";
 }
-

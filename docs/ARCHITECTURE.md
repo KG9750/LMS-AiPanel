@@ -21,7 +21,7 @@ Examples:
 - `claude:config:user-settings`
 - `codex:tool:codex-desktop`
 - `docker:container:open-webui-hauhau`
-- `local-model:model:path-<sha256>`
+- `local-model:model:path-<url-safe-path-key>`
 
 Edges express relationships such as `configured_by`, `uses`, `runs_on`, `exposes`, `depends_on`, and `owns`.
 
@@ -34,7 +34,7 @@ Adapters are read-only by default. Each adapter run produces:
 - redaction hints
 - adapter run metadata
 
-Each adapter has an independent timeout. Failure in one adapter does not block other adapters. If a run fails, the UI may use the most recent successful snapshot and mark it `stale`.
+Each adapter has an independent timeout and receives an `AbortSignal`. Concurrent refresh requests share one collection. Failure in one adapter does not block other adapters. If a run fails, the runtime uses the most recent successful snapshot, including a snapshot restored from SQLite after restart, and marks its nodes `stale`.
 
 ## Drift Engine
 
@@ -76,5 +76,8 @@ Runtime data lives outside the repository:
 ~/Library/Application Support/LMS-AiPanel/logs
 ```
 
-Snapshots store hashes, summaries, and evidence, not full raw config contents.
+Snapshots store redacted summaries and evidence, not full raw config contents. SQLite persists the latest normalized resources, relations, adapter runs, drift records, audit entries, and up to 100 recent system snapshots.
 
+## Adapter Catalog
+
+The MVP keeps static adapter registration while centralizing built-in paths in an `AdapterCatalog`. Model roots, skill roots, and MCP config candidates can be overridden with path-delimited environment variables. One unreadable root does not prevent other configured roots from being scanned.

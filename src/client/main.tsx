@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useId, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import type {
@@ -14,7 +14,16 @@ import "./styles.css";
 
 const queryClient = new QueryClient();
 
-const NAV_ITEMS = ["运行总览", "AI 工具", "AI 助手", "本地模型", "运行框架", "技能", "MCP", "配置中心", "审计日志"];
+const NAV_ITEMS: Array<{ label: string; types?: ResourceType[] }> = [
+  { label: "运行总览" },
+  { label: "AI 工具", types: ["tool"] },
+  { label: "AI 助手", types: ["assistant", "channel"] },
+  { label: "本地模型", types: ["model", "volume"] },
+  { label: "运行框架", types: ["runtime", "process", "container", "port"] },
+  { label: "技能", types: ["skill"] },
+  { label: "MCP", types: ["mcp"] },
+  { label: "配置文件", types: ["config"] }
+];
 
 const METRIC_INFO = {
   resources: {
@@ -202,6 +211,7 @@ async function fetchGraph(): Promise<SystemSnapshot> {
 }
 
 function App() {
+  const [activeView, setActiveView] = useState(0);
   const { data, error, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["graph"],
     queryFn: fetchGraph,
@@ -217,17 +227,29 @@ function App() {
   }
 
   const snapshot = data!;
+  const selectedView = NAV_ITEMS[activeView];
+  const filteredNodes = selectedView.types
+    ? snapshot.nodes.filter((node) => selectedView.types?.includes(node.type))
+    : snapshot.nodes;
+  const visibleNodeIds = new Set(filteredNodes.map((node) => node.id));
   const totals = summarize(snapshot);
-  const driftPriority = snapshot.driftRecords.slice(0, 8);
+  const driftPriority = snapshot.driftRecords
+    .filter((record) => !selectedView.types || visibleNodeIds.has(record.resourceId))
+    .slice(0, 8);
 
   return (
     <div className="app">
       <aside className="sidebar">
         <div className="brand">LMS-AiPanel</div>
         {NAV_ITEMS.map((item, index) => (
-          <button className={index === 0 ? "nav active" : "nav"} key={item}>
+          <button
+            className={index === activeView ? "nav active" : "nav"}
+            key={item.label}
+            onClick={() => setActiveView(index)}
+            aria-current={index === activeView ? "page" : undefined}
+          >
             <span className="nav-dot" />
-            {item}
+            {item.label}
           </button>
         ))}
       </aside>
@@ -235,7 +257,7 @@ function App() {
       <main className="main">
         <header className="topbar">
           <div>
-            <h1>运行总览</h1>
+            <h1>{selectedView.label}</h1>
             <p>仅本机访问的 AI 工作栈控制面板</p>
           </div>
           <div className="top-actions">
@@ -249,6 +271,15 @@ function App() {
             <button onClick={() => void refetch()}>{isFetching ? "正在刷新" : "刷新快照"}</button>
           </div>
         </header>
+
+        <label className="mobile-nav">
+          <span>资源视图</span>
+          <select value={activeView} onChange={(event) => setActiveView(Number(event.target.value))}>
+            {NAV_ITEMS.map((item, index) => (
+              <option key={item.label} value={index}>{item.label}</option>
+            ))}
+          </select>
+        </label>
 
         <section className="metrics">
           <Metric metric="resources" value={snapshot.nodes.length} />
@@ -268,7 +299,7 @@ function App() {
                 </Explain>
               </h2>
               <Explain as="span" description="当前快照中的资源节点总数，和顶部“资源”指标一致。表格为了保持可读性默认展示前 60 个节点。">
-                {snapshot.nodes.length} 个节点
+                {filteredNodes.length} 个节点
               </Explain>
             </div>
             <div className="resource-table">
@@ -286,8 +317,8 @@ function App() {
                   采集器
                 </Explain>
               </div>
-              {snapshot.nodes.slice(0, 60).map((node) => (
-                <div className="row" key={node.id}>
+              {filteredNodes.slice(0, 60).map((node) => (
+                <div className={`row ${node.properties.stale === true ? "stale-resource" : ""}`} key={node.id}>
                   <Explain as="span" className="truncate" description={describeResource(node)}>
                     {node.label}
                   </Explain>
@@ -296,7 +327,7 @@ function App() {
                   </Explain>
                   <Status value={node.state} kind="resource" />
                   <Explain as="span" description={`该资源由 ${node.sourceAdapter} adapter 采集。adapter 负责读取对应系统边界的数据，并把结果统一转换为 Resource Graph 节点。`}>
-                    {node.sourceAdapter}
+                    {node.sourceAdapter}{node.properties.stale === true ? " · 陈旧" : ""}
                   </Explain>
                 </div>
               ))}
@@ -313,8 +344,8 @@ function App() {
               <span>轻量拓扑</span>
             </div>
             <div className="map">
-              {snapshot.nodes.slice(0, 18).map((node) => (
-                <div className={`map-node ${node.state}`} key={node.id}>
+              {filteredNodes.slice(0, 18).map((node) => (
+                <div className={`map-node ${node.state} ${node.properties.stale === true ? "stale-resource" : ""}`} key={node.id}>
                   <Explain as="strong" description={describeResource(node)}>
                     {node.label}
                   </Explain>
@@ -416,7 +447,7 @@ function Status({ value, kind }: { value: ResourceState | AdapterRunStatus; kind
   );
 }
 
-function Explain({
+export function Explain({
   as = "span",
   children,
   className = "",
@@ -428,10 +459,11 @@ function Explain({
   description: string;
 }) {
   const Tag = as;
+  const tooltipId = useId();
   return (
-    <Tag className={`explain ${className}`} tabIndex={0} aria-label={description}>
+    <Tag className={`explain ${className}`} aria-describedby={tooltipId}>
       <span className="explain-label">{children}</span>
-      <span className="tooltip" role="tooltip">
+      <span className="tooltip" role="tooltip" id={tooltipId}>
         {description}
       </span>
     </Tag>
@@ -514,10 +546,12 @@ function summarize(snapshot: SystemSnapshot) {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>
-  </React.StrictMode>
-);
+if (typeof document !== "undefined") {
+  ReactDOM.createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <App />
+      </QueryClientProvider>
+    </React.StrictMode>
+  );
+}
