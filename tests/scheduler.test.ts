@@ -218,7 +218,7 @@ describe("Scheduler", () => {
 
     const res = await built.app.inject({ method: "POST", url: "/api/refresh" });
     expect(res.json().ok).toBe(true);
-    expect(res.json().data.status).toBe("started");
+    expect(res.json().data.status).toBe("running");
     expect(res.json().data.runId).toMatch(/^refresh:/);
     slowCollect?.();
     await built.close();

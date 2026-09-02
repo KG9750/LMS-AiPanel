@@ -61,7 +61,7 @@ describe("host identity persistence", () => {
     process.env.LMS_AIPANEL_DATA_DIR = dataDir;
     const first = await ensureStorage();
     const second = await ensureStorage();
-    expect(first.appliedMigrations.sort()).toEqual(["0001_initial.sql", "0002_host.sql", "0003_registry.sql", "0004_snapshots.sql"]);
+    expect(first.appliedMigrations.sort()).toEqual(["0001_initial.sql", "0002_host.sql", "0003_registry.sql", "0004_snapshots.sql", "0005_refresh.sql"]);
     expect(second.appliedMigrations).toEqual([]);
 
     const hostOne = getOrCreateHost(first.db);
@@ -81,7 +81,7 @@ describe("host identity persistence", () => {
     const migrationsDir = path.join(process.cwd(), "migrations");
     const first = await applyMigrations(db, migrationsDir);
     const second = await applyMigrations(db, migrationsDir);
-    expect(first.length).toBe(4);
+    expect(first.length).toBe(5);
     expect(second).toEqual([]);
     closeDatabase(db);
   });

@@ -8,6 +8,8 @@ import { redactValue } from "../domain/redaction";
 import { isStamped, stampHostId } from "../domain/scope";
 import { mergeRegistry } from "../domain/registryMerge";
 import { Scheduler } from "../domain/scheduler";
+import { RefreshOrchestrator } from "../domain/refreshOrchestrator";
+import { SseHub, type RefreshEvent } from "../domain/sseHub";
 import { createAdapters } from "../adapters";
 import { AdapterRuntime } from "../adapters/runtime";
 import { resolveCapabilityStates, type StackAdapter } from "../adapters/types";
@@ -18,6 +20,7 @@ import { getAppPaths } from "../storage/paths";
 import { getOrCreateHost } from "../storage/host";
 import { RegistryRepository } from "../storage/registry";
 import { SnapshotStore } from "../storage/snapshots";
+import { RefreshRunStore } from "../storage/refreshRuns";
 import { closeDatabase } from "../storage/db";
 
 export interface AppOptions {
@@ -39,6 +42,8 @@ export interface BuiltApp {
   runtime: AdapterRuntime;
   registry: RegistryRepository;
   scheduler: Scheduler;
+  sseHub: SseHub;
+  refresher: RefreshOrchestrator;
   close: () => Promise<void>;
 }
 
@@ -84,6 +89,10 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
   // Restore the latest persisted snapshot, then start background collection.
   scheduler.restore();
   scheduler.start();
+
+  const refreshStore = new RefreshRunStore(storage.db);
+  const sseHub = new SseHub();
+  const refresher = new RefreshOrchestrator(refreshStore, scheduler, sseHub, host.hostId);
 
   const auditLog: Array<Record<string, unknown>> = [];
   const appPaths = getAppPaths();
@@ -161,20 +170,75 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
     return envelope(ok(snapshot ? snapshot.driftRecords : []));
   });
 
-  /** Manual refresh: returns immediately with the run id; issue #5 streams progress. */
+  // ---- Manual refresh with RefreshRun + SSE (issue #5) ----
+
+  /** Starts a refresh and returns the run id immediately (non-blocking). */
   app.post("/api/refresh", async () => {
-    const runId = `refresh:${nanoid()}`;
-    void scheduler.collect("all").then(() => {
-      auditLog.push({
-        id: `audit:${nanoid()}`,
-        timestamp: new Date().toISOString(),
-        actor: "local-user",
-        action: "refresh",
-        resourceId: runId,
-        result: "completed"
-      });
+    const run = refresher.start();
+    auditLog.push({
+      id: `audit:${nanoid()}`,
+      timestamp: new Date().toISOString(),
+      actor: "local-user",
+      action: "refresh:start",
+      resourceId: run.runId,
+      result: "started"
     });
-    return envelope(ok({ runId, status: "started" }));
+    return envelope(ok({ runId: run.runId, status: "running", startedAt: run.startedAt }));
+  });
+
+  /** Poll a persisted refresh run (disconnect recovery). */
+  app.get<{ Params: { id: string } }>("/api/refresh/:id", async (request) => {
+    const run = refresher.get(request.params.id);
+    if (!run) {
+      return envelope(fail({ code: "NOT_FOUND", message: `No refresh run ${request.params.id}` }));
+    }
+    return envelope(ok(run));
+  });
+
+  /** Recent refresh run history. */
+  app.get("/api/refresh", async () => envelope(ok(refreshStore.list(host.hostId, 20))));
+
+  /** Cancels a running refresh. */
+  app.post<{ Params: { id: string } }>("/api/refresh/:id/cancel", async (request) => {
+    const run = refresher.cancel(request.params.id);
+    if (!run) {
+      return envelope(fail({ code: "NOT_FOUND", message: `No refresh run ${request.params.id}` }));
+    }
+    auditLog.push({
+      id: `audit:${nanoid()}`,
+      timestamp: new Date().toISOString(),
+      actor: "local-user",
+      action: "refresh:cancel",
+      resourceId: run.runId,
+      result: "cancelled"
+    });
+    return envelope(ok(run));
+  });
+
+  /** Server-sent events: live refresh progress. */
+  app.get("/api/refresh/events", async (request, reply) => {
+    reply.raw.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no"
+    });
+    reply.raw.write("retry: 2000\n\n");
+
+    const send = (event: RefreshEvent) => {
+      const payload = `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+      reply.raw.write(payload);
+    };
+    const unsubscribe = sseHub.subscribe(send);
+    const keepAlive = setInterval(() => {
+      reply.raw.write(": ping\n\n");
+    }, 15_000);
+
+    request.raw.on("close", () => {
+      clearInterval(keepAlive);
+      unsubscribe();
+    });
+    return reply;
   });
 
   // ---- Managed Resource Registry (issue #3) ----
@@ -350,8 +414,11 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
     runtime,
     registry,
     scheduler,
+    sseHub,
+    refresher,
     close: async () => {
       scheduler.stop();
+      refresher.dispose();
       await app.close();
       closeDatabase(storage.db);
     }
