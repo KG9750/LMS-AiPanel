@@ -1,6 +1,14 @@
 import type { AdapterResult, RedactionHint, ResourceNode } from "../shared/schemas";
 
-const SENSITIVE_KEY_PATTERN = /(token|api[_-]?key|secret|password|credential|auth|helper)/i;
+const SENSITIVE_KEY_PATTERN = /(api[_-]?key|secret|password|credential|auth|helper)/i;
+const TOKEN_KEY_PATTERN = /token/i;
+const TOKEN_COUNT_KEY_PATTERN =
+  /^(tokenUsage|tokens|tokenCount|inputTokens|outputTokens|promptTokens|completionTokens|totalTokens|cachedTokens|maxTokens|contextTokens|tokensPerSecond)$/i;
+
+function isSensitiveKey(key: string): boolean {
+  if (SENSITIVE_KEY_PATTERN.test(key)) return true;
+  return TOKEN_KEY_PATTERN.test(key) && !TOKEN_COUNT_KEY_PATTERN.test(key.replaceAll("_", ""));
+}
 
 export function redactValue(value: unknown): unknown {
   if (Array.isArray(value)) {
@@ -10,7 +18,7 @@ export function redactValue(value: unknown): unknown {
   if (value && typeof value === "object") {
     const result: Record<string, unknown> = {};
     for (const [key, nested] of Object.entries(value)) {
-      result[key] = SENSITIVE_KEY_PATTERN.test(key) ? "<redacted>" : redactValue(nested);
+      result[key] = isSensitiveKey(key) ? "<redacted>" : redactValue(nested);
     }
     return result;
   }
@@ -30,7 +38,7 @@ export function redactValue(value: unknown): unknown {
 }
 
 export function redactStringForDisplay(value: string): string {
-  if (!SENSITIVE_KEY_PATTERN.test(value)) {
+  if (!SENSITIVE_KEY_PATTERN.test(value) && !TOKEN_KEY_PATTERN.test(value)) {
     return value;
   }
   return "<redacted>";

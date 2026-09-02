@@ -30,6 +30,28 @@ describe("redaction", () => {
     });
   });
 
+  it("keeps token counters while redacting access tokens", () => {
+    expect(
+      redactValue({
+        access_token: "secret-value",
+        token: "secret-value",
+        tokenUsage: {
+          inputTokens: 120,
+          outputTokens: 80,
+          totalTokens: 200
+        }
+      })
+    ).toEqual({
+      access_token: "<redacted>",
+      token: "<redacted>",
+      tokenUsage: {
+        inputTokens: 120,
+        outputTokens: 80,
+        totalTokens: 200
+      }
+    });
+  });
+
   it("redacts sensitive values inside JSON strings and applies adapter hints", () => {
     expect(redactValue('{"api_key":"secret-value","description":"Local model"}')).toBe(
       '{"api_key":"<redacted>","description":"Local model"}'

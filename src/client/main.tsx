@@ -233,6 +233,8 @@ function App() {
     : snapshot.nodes;
   const visibleNodeIds = new Set(filteredNodes.map((node) => node.id));
   const totals = summarize(snapshot);
+  const tokenStats = summarizeModelTokenUsage(snapshot.nodes);
+  const showTokenStats = activeView === 0 || selectedView.types?.includes("model") === true;
   const driftPriority = snapshot.driftRecords
     .filter((record) => !selectedView.types || visibleNodeIds.has(record.resourceId))
     .slice(0, 8);
@@ -357,6 +359,53 @@ function App() {
             </div>
           </div>
 
+          {showTokenStats ? (
+            <div className="panel token-panel">
+              <div className="panel-head">
+                <h2>
+                  <Explain description="按本地模型汇总 Open WebUI 已保存的真实 usage 数据。统计只读取 model_id、usage 数字和调用时间，不读取聊天正文。">
+                    本地模型 Token 统计
+                  </Explain>
+                </h2>
+                <Explain as="span" description="有可用 usage 记录的模型数量。没有记录的模型不会按 0 计算，以免把“没有数据”误解为“从未调用”。">
+                  {tokenStats.models.length} 个模型有记录
+                </Explain>
+              </div>
+              <div className="token-summary">
+                <TokenMetric label="输入 Token" value={tokenStats.inputTokens} description="发送给模型的 token 总数，包括用户输入、系统提示和进入上下文的历史内容。来源是 Open WebUI usage 中的 input_tokens、prompt_tokens 或 prompt_n。" />
+                <TokenMetric label="输出 Token" value={tokenStats.outputTokens} description="模型生成的 token 总数。来源是 Open WebUI usage 中的 output_tokens、completion_tokens 或 predicted_n。" />
+                <TokenMetric label="总 Token" value={tokenStats.totalTokens} description="输入 Token 与输出 Token 的合计。若调用记录提供 total_tokens 则优先使用该值，否则由输入和输出相加。" />
+                <TokenMetric label="调用次数" value={tokenStats.requestCount} description="带有有效 usage 对象的本地模型调用记录数量。没有 usage 的聊天消息不会计入。" />
+              </div>
+              {tokenStats.models.length === 0 ? (
+                <p className="empty">当前没有可用的本地模型 Token usage 记录。</p>
+              ) : (
+                <div className="token-table">
+                  <div className="token-row token-header">
+                    <Explain as="span" description="Open WebUI 调用记录中的模型标识所对应的本地模型名称。">模型</Explain>
+                    <Explain as="span" description="该模型累计接收的输入 token。">输入</Explain>
+                    <Explain as="span" description="该模型累计生成的输出 token。">输出</Explain>
+                    <Explain as="span" description="该模型输入与输出 token 的累计总量。">总计</Explain>
+                    <Explain as="span" description="该模型具有有效 usage 数据的调用次数。">调用</Explain>
+                    <Explain as="span" description="该模型最近一条有效 usage 调用记录的本机时间。">最近调用</Explain>
+                  </div>
+                  {tokenStats.models.map((model) => (
+                    <div className="token-row" key={model.resourceId}>
+                      <Explain as="span" className="truncate" description={`${model.label} 的统计来自 Open WebUI chat_message.usage，不包含聊天正文。`}>
+                        {model.label}
+                      </Explain>
+                      <span>{formatTokenCount(model.inputTokens)}</span>
+                      <span>{formatTokenCount(model.outputTokens)}</span>
+                      <strong>{formatTokenCount(model.totalTokens)}</strong>
+                      <span>{formatTokenCount(model.requestCount)}</span>
+                      <span>{formatDate(model.lastUsedAt)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : null}
+
           <div className="panel drift-panel">
             <div className="panel-head">
               <h2>
@@ -434,6 +483,15 @@ function Metric({
         {info.label}
       </Explain>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function TokenMetric({ label, value, description }: { label: string; value: number; description: string }) {
+  return (
+    <div className="token-metric">
+      <Explain as="span" description={description}>{label}</Explain>
+      <strong>{formatTokenCount(value)}</strong>
     </div>
   );
 }
@@ -533,6 +591,50 @@ function formatDate(value: string) {
     minute: "2-digit",
     second: "2-digit"
   }).format(new Date(value));
+}
+
+function formatTokenCount(value: number): string {
+  return new Intl.NumberFormat("zh-CN").format(value);
+}
+
+interface TokenUsageRow {
+  resourceId: string;
+  label: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  requestCount: number;
+  lastUsedAt: string;
+}
+
+export function summarizeModelTokenUsage(nodes: ResourceNode[]) {
+  const models = nodes.flatMap((node): TokenUsageRow[] => {
+    const usage = node.properties.tokenUsage;
+    if (node.type !== "model" || !usage || typeof usage !== "object") return [];
+    const record = usage as Record<string, unknown>;
+    const inputTokens = tokenNumber(record.inputTokens);
+    const outputTokens = tokenNumber(record.outputTokens);
+    const totalTokens = tokenNumber(record.totalTokens);
+    const requestCount = tokenNumber(record.requestCount);
+    const lastUsedAt = typeof record.lastUsedAt === "string" ? record.lastUsedAt : "";
+    if (!lastUsedAt || requestCount === 0) return [];
+    return [{ resourceId: node.id, label: node.label, inputTokens, outputTokens, totalTokens, requestCount, lastUsedAt }];
+  });
+
+  return models.reduce(
+    (summary, model) => ({
+      models: [...summary.models, model],
+      inputTokens: summary.inputTokens + model.inputTokens,
+      outputTokens: summary.outputTokens + model.outputTokens,
+      totalTokens: summary.totalTokens + model.totalTokens,
+      requestCount: summary.requestCount + model.requestCount
+    }),
+    { models: [] as TokenUsageRow[], inputTokens: 0, outputTokens: 0, totalTokens: 0, requestCount: 0 }
+  );
+}
+
+function tokenNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
 }
 
 function summarize(snapshot: SystemSnapshot) {

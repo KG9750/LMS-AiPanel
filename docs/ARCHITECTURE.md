@@ -81,3 +81,7 @@ Snapshots store redacted summaries and evidence, not full raw config contents. S
 ## Adapter Catalog
 
 The MVP keeps static adapter registration while centralizing built-in paths in an `AdapterCatalog`. Model roots, skill roots, and MCP config candidates can be overridden with path-delimited environment variables. One unreadable root does not prevent other configured roots from being scanned.
+
+## Local Model Token Usage
+
+The Open WebUI adapter aggregates `input_tokens`, `output_tokens`, `total_tokens`, request count, and latest usage time by `model_id` from `chat_message.usage`. It never reads chat content for this feature. Missing usage data is represented as unavailable rather than zero, and older Open WebUI schemas degrade only the usage panel while preserving model discovery.

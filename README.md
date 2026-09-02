@@ -15,6 +15,7 @@ This repository contains the first runnable foundation:
 - Action execution disabled by default; action planning only
 - SQLite persistence for redacted snapshots and audit entries
 - Chinese resource filters and detailed hover descriptions
+- Per-model local token usage totals from Open WebUI history, without reading chat content
 
 ## Run
 
