@@ -5,6 +5,7 @@ import { DockerAdapter } from "./dockerAdapter";
 import { LaunchAgentAdapter } from "./launchAgentAdapter";
 import { LocalModelsAdapter } from "./localModelsAdapter";
 import { McpAdapter } from "./mcpAdapter";
+import { OmlxAdapter } from "./omlxAdapter";
 import { OpenWebUIAdapter } from "./openWebUIAdapter";
 import { SkillsAdapter } from "./skillsAdapter";
 
@@ -17,7 +18,7 @@ export function createAdapters(): StackAdapter[] {
     new LaunchAgentAdapter(),
     new LocalModelsAdapter(),
     new SkillsAdapter(),
-    new McpAdapter()
+    new McpAdapter(),
+    new OmlxAdapter()
   ];
 }
-
