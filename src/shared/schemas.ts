@@ -15,6 +15,7 @@ export const resourceTypeSchema = z.enum([
   "assistant",
   "model",
   "runtime",
+  "endpoint",
   "config",
   "skill",
   "mcp",

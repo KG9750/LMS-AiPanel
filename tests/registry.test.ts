@@ -41,6 +41,7 @@ function makeEntry(overrides: Partial<RegistryEntry> = {}): RegistryEntry {
     resourceType: "runtime",
     stableKey: "test-1",
     label: "oMLX test-1 (managed)",
+    managed: false,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     ...overrides

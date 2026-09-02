@@ -54,7 +54,7 @@ export class RegistryRepository {
   list(): RegistryEntry[] {
     const rows = this.db
       .prepare("SELECT * FROM registry_entries WHERE host_id = ? ORDER BY created_at")
-      .all(this.hostId) as RegistryRow[];
+      .all(this.hostId) as unknown as RegistryRow[];
     return rows.map(toEntry);
   }
 
@@ -63,7 +63,7 @@ export class RegistryRepository {
       .prepare(
         "SELECT * FROM registry_entries WHERE host_id = ? AND adapter_id = ? AND resource_type = ? AND stable_key = ? LIMIT 1"
       )
-      .get(this.hostId, adapterId, resourceType, stableKey) as RegistryRow | undefined;
+      .get(this.hostId, adapterId, resourceType, stableKey) as unknown as RegistryRow | undefined;
     return row ? toEntry(row) : undefined;
   }
 
@@ -125,9 +125,9 @@ export class RegistryRepository {
   }
 
   get(id: string): RegistryEntry | undefined {
-    const row = this.db.prepare("SELECT * FROM registry_entries WHERE id = ? AND host_id = ?").get(id, this.hostId) as
-      | RegistryRow
-      | undefined;
+    const row = this.db
+      .prepare("SELECT * FROM registry_entries WHERE id = ? AND host_id = ?")
+      .get(id, this.hostId) as unknown as RegistryRow | undefined;
     return row ? toEntry(row) : undefined;
   }
 }

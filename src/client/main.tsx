@@ -71,6 +71,10 @@ const RESOURCE_TYPE_INFO: Record<ResourceType, { label: string; description: str
     label: "运行框架",
     description: "承载模型或服务的运行层，例如 launchd、llama、mlx、Docker runtime 或其他本机服务管理器。"
   },
+  endpoint: {
+    label: "端点",
+    description: "本机推理服务暴露的 API 端点，例如 MLX Server、llama.cpp 或 Ollama 的 OpenAI 兼容地址。端点身份需验证后才标记为 live。"
+  },
   config: {
     label: "配置文件",
     description: "工具或助手读取的配置来源，例如 AGENTS.md、CLAUDE.md、settings.json、config.toml。配置文件只读采集，写入必须经过 Action Gateway。"
