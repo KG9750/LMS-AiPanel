@@ -76,7 +76,8 @@ describe("adapter capability manifests", () => {
     const good = createAdapters()[0];
     const built = await buildApp({
       dataDir: path.join(tmpDir, "isolate"),
-      adapters: [good, broken]
+      adapters: [good, broken],
+      schedulerAutoStart: false
     });
 
     const res = await built.app.inject({ method: "GET", url: "/api/adapters" });
@@ -87,6 +88,7 @@ describe("adapter capability manifests", () => {
     expect(body.data.registered.find((e: { id: string }) => e.id === "broken").manifest).toBeNull();
 
     // The healthy adapter still collects and reports capabilities.
+    await built.scheduler.collect("all");
     const graph = await built.app.inject({ method: "GET", url: "/api/graph" });
     expect(graph.json().ok).toBe(true);
     const after = await built.app.inject({ method: "GET", url: "/api/adapters" });

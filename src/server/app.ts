@@ -268,9 +268,22 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
   app.get("/api/graph", async () => {
     const snapshot = latestSnapshot();
     if (!snapshot) {
-      // First run before any collection finished: kick off one collection.
-      const collected = await scheduler.collect("all");
-      return envelope(ok(collected.snapshot));
+      // Cold start: never block the request on a full collection (M5). The
+      // scheduler collects in the background; return an empty snapshot with
+      // a meta flag so the UI can show the collecting state.
+      return envelope(
+        ok(
+          {
+            version: 0,
+            host,
+            nodes: [],
+            edges: [],
+            adapterRuns: [],
+            driftRecords: []
+          },
+          { collecting: true }
+        )
+      );
     }
     const unstamped = snapshot.nodes.filter((node) => !isStamped(node));
     if (unstamped.length > 0) {

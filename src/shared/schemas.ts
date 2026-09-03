@@ -215,7 +215,9 @@ export const apiMetaSchema = z.object({
   timestamp: z.string().datetime(),
   requestId: z.string().optional(),
   adapterId: z.string().optional(),
-  hostId: z.string().optional()
+  hostId: z.string().optional(),
+  /** True when a cold-start response is served before the first snapshot. */
+  collecting: z.boolean().optional()
 });
 
 export const systemSnapshotSchema = z.object({

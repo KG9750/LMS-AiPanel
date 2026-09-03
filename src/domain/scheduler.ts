@@ -65,6 +65,9 @@ export class Scheduler {
     if (!this.options.autoStart || this.stopped) return;
     this.fastTimer = setInterval(() => void this.collect("fast"), this.options.fastIntervalMs);
     this.slowTimer = setInterval(() => void this.collect("slow"), this.options.slowIntervalMs);
+    // Kick off an initial background collection so the first snapshot is
+    // ready shortly after startup WITHOUT blocking query requests (M5).
+    void this.collect("all");
   }
 
   stop(): void {

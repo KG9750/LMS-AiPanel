@@ -259,21 +259,62 @@ describe("Scheduler fake timers", () => {
       });
       scheduler.start();
 
-      await vi.advanceTimersByTimeAsync(10_000);
-      expect(fastCalls.n).toBe(1);
-      expect(slowCalls.n).toBe(0);
+      // start() fires one initial background collect ("all") immediately.
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fastCalls.n + slowCalls.n).toBe(2);
 
-      await vi.advanceTimersByTimeAsync(30_000);
-      expect(fastCalls.n).toBe(4);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(fastCalls.n).toBe(2);
       expect(slowCalls.n).toBe(1);
 
-      await vi.advanceTimersByTimeAsync(40_000);
-      expect(fastCalls.n).toBe(8);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(fastCalls.n).toBe(5);
       expect(slowCalls.n).toBe(2);
+
+      await vi.advanceTimersByTimeAsync(40_000);
+      expect(fastCalls.n).toBe(9);
+      expect(slowCalls.n).toBe(3);
 
       scheduler.stop();
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+describe("Scheduler cold start (M5)", () => {
+  it("GET /api/graph never blocks on a full collection and reports collecting", async () => {
+    let collectStarted: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      collectStarted = resolve;
+    });
+    let calls = 0;
+    const slow: StackAdapter = {
+      ...makeAdapter("slowpoke", 10, [testNode("slowpoke:runtime:one")]),
+      async collect(c) {
+        calls++;
+        collectStarted?.();
+        await new Promise((r) => setTimeout(r, 50));
+        return { nodes: [testNode("slowpoke:runtime:one")], edges: [], redactionHints: [] };
+      }
+    };
+    const built = await buildApp({
+      dataDir: path.join(tmpDir, "cold"),
+      adapters: [slow],
+      schedulerAutoStart: false
+    });
+
+    // Cold: no snapshot yet; the GET must return immediately without
+    // triggering collection (calls stays 0), flagged collecting in meta.
+    const cold = await built.app.inject({ method: "GET", url: "/api/graph" });
+    expect(cold.json().ok).toBe(true);
+    expect(cold.json().data.version).toBe(0);
+    expect(cold.json().meta.collecting).toBe(true);
+    expect(calls).toBe(0);
+
+    // The background collection still happens on demand.
+    await built.scheduler.collect("all");
+    expect(calls).toBe(1);
+    void gate;
+    await built.close();
   });
 });
