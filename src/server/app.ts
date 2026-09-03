@@ -1019,7 +1019,17 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
         })
       );
     }
-    const restored = await configCenter.restore(request.params.id);
+    let restored;
+    try {
+      restored = await configCenter.restore(request.params.id, isAllowedConfigPath);
+    } catch (error) {
+      return envelope(
+        fail({
+          code: "CONFIG_RESTORE_DENIED",
+          message: error instanceof Error ? error.message : String(error)
+        })
+      );
+    }
     if (!restored) return envelope(fail({ code: "NOT_FOUND", message: `No backup ${request.params.id}` }));
     auditLog.push({
       id: `audit:${nanoid()}`,

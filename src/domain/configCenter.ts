@@ -135,6 +135,44 @@ function sha256(content: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
+/** Redacted marker emitted by redactConfigContent for sensitive values. */
+const REDACTED_VALUE = '"<redacted>"';
+
+function isRedactedLine(line: string): boolean {
+  return line.includes("<redacted>");
+}
+
+/**
+ * Replaces redacted values in the editor draft with the original values from
+ * the server-held file (N1). Lines are matched positionally by key; a line
+ * whose value was redacted takes the original file's value verbatim.
+ */
+function backfillRedactedLines(updated: string, original: string): string {
+  const updatedLines = updated.split("\n");
+  const originalByKey = new Map<string, string>();
+  for (const line of original.split("\n")) {
+    const match = line.match(/^\s*([A-Za-z0-9_.-]+)\s*=/);
+    if (match) originalByKey.set(match[1], line);
+  }
+  return updatedLines
+    .map((line) => {
+      if (!isRedactedLine(line)) return line;
+      const match = line.match(/^(\s*)([A-Za-z0-9_.-]+)(\s*=\s*)(.*)$/);
+      if (!match) return line;
+      const [, indent, key, eq] = match;
+      const originalLine = originalByKey.get(key);
+      if (originalLine === undefined) return line;
+      // Preserve the editor's indentation/eq, restore the original value.
+      const originalValue = originalLine.slice(originalLine.indexOf("=") + 1).trimStart();
+      return `${indent}${key}${eq}${originalValue}`;
+    })
+    .join("\n");
+}
+
+function countRedactedLines(content: string): number {
+  return content.split("\n").filter(isRedactedLine).length;
+}
+
 function tomlValueType(value: unknown): ConfigFieldSpec["type"] {
   if (typeof value === "string") return "string";
   if (typeof value === "number") return "number";
@@ -219,6 +257,12 @@ export class ConfigCenter {
   /**
    * Applies the edited content: validates the preview is fresh, backs up the
    * original, writes atomically, re-reads, and returns verification evidence.
+   *
+   * N1: the editor's draft is a REDACTED view. Before writing, every line
+   * whose value was redacted (`"<redacted>"` or a redacted value) is
+   * backfilled from the server-held ORIGINAL file so a round trip never
+   * destroys real secrets. Users cannot edit secret values through the UI;
+   * changing them requires editing the file directly and re-previewing.
    */
   async apply(
     preview: ConfigPreview,
@@ -242,12 +286,44 @@ export class ConfigCenter {
     }
     evidence.push("preview hash matches current file (external-change guard passed)");
 
+    // N1: backfill redacted lines with the original values so a preview ->
+    // apply round trip preserves secrets. The original file is read from
+    // disk (it still matches the preview hash, verified above).
+    const originalContent = await fs.readFile(preview.filePath, "utf8");
+    const finalContent = backfillRedactedLines(updatedContent, originalContent);
+    const redactedLines = countRedactedLines(updatedContent);
+    if (redactedLines > 0) {
+      evidence.push(`backfilled ${redactedLines} redacted line(s) with original values`);
+    }
+
+    // N3: validate the final TOML BEFORE writing anything.
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = parse(finalContent) as Record<string, unknown>;
+    } catch (error) {
+      return {
+        ok: false,
+        evidence: [...evidence, `pre-apply TOML validation failed: ${error instanceof Error ? error.message : String(error)}`],
+        backup: await this.backup(preview.filePath, actionRunId, "invalid-edit"),
+        error: "pre-apply TOML validation failed; nothing was written"
+      };
+    }
+    if (typeof parsed !== "object" || parsed === null) {
+      return {
+        ok: false,
+        evidence: [...evidence, "pre-apply TOML validation failed: not an object"],
+        backup: await this.backup(preview.filePath, actionRunId, "invalid-edit"),
+        error: "pre-apply TOML validation failed; nothing was written"
+      };
+    }
+    evidence.push("pre-apply TOML validation passed; nothing written yet");
+
     const backup = await this.backup(preview.filePath, actionRunId, "before-apply");
 
     // Atomic replacement: temp file -> fsync -> rename.
     const dir = path.dirname(preview.filePath);
     const tmpPath = path.join(dir, `.lms-aipanel-${nanoid(8)}.tmp`);
-    await fs.writeFile(tmpPath, updatedContent, "utf8");
+    await fs.writeFile(tmpPath, finalContent, "utf8");
     const handle = await fs.open(tmpPath, "r");
     try {
       await handle.sync();
@@ -261,7 +337,7 @@ export class ConfigCenter {
     const reRead = await fs.readFile(preview.filePath, "utf8");
     const reParsed = parse(reRead) as Record<string, unknown>;
     const appliedHash = sha256(reRead);
-    if (appliedHash === sha256(updatedContent) && typeof reParsed === "object") {
+    if (appliedHash === sha256(finalContent) && typeof reParsed === "object") {
       evidence.push("post-apply re-read verified: content hash matches and TOML parses");
       return { ok: true, evidence, backup };
     }
@@ -295,8 +371,15 @@ export class ConfigCenter {
     return record;
   }
 
-  /** Restores a backup's content to the original file path (rollback path). */
-  async restore(backupId: string): Promise<BackupRecord | null> {
+  /**
+   * Restores a backup's content to the original file path (rollback path).
+   * N2: the target path must pass the caller-provided allowlist check, and
+   * the write uses O_NOFOLLOW so a symlink swap cannot redirect it.
+   */
+  async restore(
+    backupId: string,
+    isAllowed: (filePath: string) => Promise<boolean>
+  ): Promise<BackupRecord | null> {
     const row = this.db
       .prepare(
         "SELECT id, host_id, config_type, file_path, content, file_hash, action_run_id, created_at FROM config_backups WHERE id = ? AND host_id = ?"
@@ -314,6 +397,9 @@ export class ConfigCenter {
         }
       | undefined;
     if (!row) return null;
+    if (!(await isAllowed(row.file_path))) {
+      throw new Error(`restore target ${row.file_path} is not in the Config Center whitelist`);
+    }
     const record: BackupRecord = {
       id: row.id,
       hostId: row.host_id,
@@ -324,7 +410,24 @@ export class ConfigCenter {
       actionRunId: row.action_run_id ?? undefined,
       createdAt: row.created_at
     };
-    await fs.writeFile(record.filePath, record.content, "utf8");
+    // O_NOFOLLOW: refuse to open (and thus write) through a symlink — a
+    // symlink swap cannot redirect the restore to an arbitrary file (N2).
+    let handle: fs.FileHandle;
+    try {
+      handle = await fs.open(record.filePath, fs.constants.O_WRONLY | fs.constants.O_TRUNC | 0o400000);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("ELOOP")) {
+        throw new Error(`restore target ${record.filePath} is a symlink; refusing to write through it`);
+      }
+      throw error;
+    }
+    try {
+      await handle.writeFile(record.content, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     return record;
   }
 

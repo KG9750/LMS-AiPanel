@@ -173,7 +173,7 @@ describe("ConfigCenter direct", () => {
     expect(outcome.ok).toBe(true);
     expect(outcome.backup.content).toBe(INITIAL);
 
-    const restored = await center.restore(outcome.backup.id);
+    const restored = await center.restore(outcome.backup.id, async () => true);
     expect(restored?.content).toBe(INITIAL);
     expect(await fs.readFile(configFile, "utf8")).toBe(INITIAL);
     await built.close();

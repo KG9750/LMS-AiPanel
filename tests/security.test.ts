@@ -173,3 +173,88 @@ describe("M1: command endpoints reject missing sessions", () => {
     await built.close();
   });
 });
+
+describe("N1: preview -> apply round trip preserves secrets", () => {
+  it("applying the redacted draft does not destroy real values", async () => {
+    const cfg = path.join(tmpDir, "roundtrip.toml");
+    await fs.writeFile(cfg, 'model = "gpt-5"\ntoken = "sk-real-secret-abc"\n', "utf8");
+    const built = await buildApp({ dataDir: path.join(tmpDir, "n1"), adapters: [], schedulerAutoStart: false, configPaths: [cfg] });
+
+    // Client flow: read the redacted preview, edit a non-sensitive field,
+    // and apply the draft as-is.
+    const preview = (await (await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(cfg)}` })).json()).data;
+    expect(preview.rawContent).not.toContain("sk-real-secret-abc");
+    const draft = preview.rawContent.replace('model = "gpt-5"', 'model = "gpt-5.1"');
+
+    const issue = await built.app.inject({ method: "POST", url: "/api/session" });
+    const token = issue.json().data.token;
+    const apply = await built.app.inject({
+      method: "POST",
+      url: "/api/config/apply",
+      headers: { "x-lms-session": token },
+      payload: { path: cfg, content: draft, previewHash: preview.previewHash }
+    });
+    expect(apply.json().data.ok).toBe(true);
+
+    // The secret survives the round trip; the edit landed.
+    const after = await fs.readFile(cfg, "utf8");
+    expect(after).toContain('token = "sk-real-secret-abc"');
+    expect(after).toContain('model = "gpt-5.1"');
+    expect(after).not.toContain("<redacted>");
+    await built.close();
+  });
+
+  it("apply validates TOML before writing anything (N3 pre-apply)", async () => {
+    const cfg = path.join(tmpDir, "validate.toml");
+    await fs.writeFile(cfg, 'model = "gpt-5"\n', "utf8");
+    const built = await buildApp({ dataDir: path.join(tmpDir, "n3"), adapters: [], schedulerAutoStart: false, configPaths: [cfg] });
+    const preview = (await (await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(cfg)}` })).json()).data;
+    const issue = await built.app.inject({ method: "POST", url: "/api/session" });
+    const token = issue.json().data.token;
+
+    const apply = await built.app.inject({
+      method: "POST",
+      url: "/api/config/apply",
+      headers: { "x-lms-session": token },
+      payload: { path: cfg, content: 'model = "gpt-5"\nthis is [not valid toml', previewHash: preview.previewHash }
+    });
+    expect(apply.json().data.ok).toBe(false);
+    // The file must be untouched (pre-apply validation, not post-write).
+    expect(await fs.readFile(cfg, "utf8")).toBe('model = "gpt-5"\n');
+    await built.close();
+  });
+});
+
+describe("N2: restore cannot write through symlinks or outside the whitelist", () => {
+  it("restore refuses a symlink-swapped target", async () => {
+    const cfg = path.join(tmpDir, "cfg.toml");
+    const victim = path.join(tmpDir, "victim.toml");
+    await fs.writeFile(cfg, 'model = "clean"\n', "utf8");
+    await fs.writeFile(victim, 'model = "original"\n', "utf8");
+    const built = await buildApp({ dataDir: path.join(tmpDir, "n2"), adapters: [], schedulerAutoStart: false, configPaths: [cfg] });
+    const issue = await built.app.inject({ method: "POST", url: "/api/session" });
+    const token = issue.json().data.token;
+    const auth = { "x-lms-session": token };
+
+    async function previewHash() {
+      const p = (await (await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(cfg)}` })).json()).data;
+      return p.previewHash;
+    }
+    // Create a backup whose content is the evil payload.
+    await built.app.inject({ method: "POST", url: "/api/config/apply", headers: auth, payload: { path: cfg, content: 'model = "evil"\n', previewHash: await previewHash() } });
+    await built.app.inject({ method: "POST", url: "/api/config/apply", headers: auth, payload: { path: cfg, content: 'model = "clean"\n', previewHash: await previewHash() } });
+    const backups = (await (await built.app.inject({ method: "GET", url: "/api/config/backups" })).json()).data;
+    const evilBackup = backups.find((b: { content: string }) => b.content.includes("evil"));
+
+    // Swap the whitelisted file for a symlink to the victim.
+    await fs.rm(cfg);
+    await fs.symlink(victim, cfg);
+
+    const restore = await built.app.inject({ method: "POST", url: `/api/config/backups/${evilBackup.id}/restore`, headers: auth });
+    expect(restore.json().ok).toBe(false);
+    expect(restore.json().error.code).toBe("CONFIG_RESTORE_DENIED");
+    // The victim is untouched.
+    expect(await fs.readFile(victim, "utf8")).toBe('model = "original"\n');
+    await built.close();
+  });
+});
