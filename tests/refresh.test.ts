@@ -180,6 +180,34 @@ describe("RefreshRun + SSE", () => {
     await built.close();
   });
 
+  it("a late SSE subscriber receives replayed history for the active run (M6)", async () => {
+    const built = await buildApp({
+      dataDir: path.join(tmpDir, "replay"),
+      adapters: [makeAdapter("theta", 30)],
+      schedulerAutoStart: false
+    });
+    const auth = await sessionHeader(built);
+    await built.app.inject({ method: "POST", url: "/api/refresh", headers: auth });
+
+    // Subscribe AFTER the run started (late/reconnecting client).
+    const received: string[] = [];
+    const unsubscribe = built.sseHub.subscribe((event) => {
+      received.push(event.type);
+    });
+
+    // The replayed history must include the run event and, once the run
+    // completes, the adapter + snapshot events.
+    expect(received[0]).toBe("run");
+    for (let i = 0; i < 50; i++) {
+      if (received.includes("snapshot")) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    unsubscribe();
+    expect(received).toContain("adapter");
+    expect(received[received.length - 1]).toBe("snapshot");
+    await built.close();
+  });
+
   it("refresh history lists recent runs", async () => {
     const built = await buildApp({
       dataDir: path.join(tmpDir, "history"),
