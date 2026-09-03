@@ -361,7 +361,15 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
   // ---- Manual refresh with RefreshRun + SSE (issue #5) ----
 
   /** Starts a refresh and returns the run id immediately (non-blocking). */
-  app.post("/api/refresh", async () => {
+  app.post("/api/refresh", async (request) => {
+    if (!requireWrite(request)) {
+      return envelope(
+        fail({
+          code: "WRITE_GUARD_REJECTED",
+          message: "Refresh requires a valid local session from an allowed origin"
+        })
+      );
+    }
     const run = refresher.start();
     auditLog.push({
       id: `audit:${nanoid()}`,
@@ -388,6 +396,14 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
 
   /** Cancels a running refresh. */
   app.post<{ Params: { id: string } }>("/api/refresh/:id/cancel", async (request) => {
+    if (!requireWrite(request)) {
+      return envelope(
+        fail({
+          code: "WRITE_GUARD_REJECTED",
+          message: "Refresh cancellation requires a valid local session"
+        })
+      );
+    }
     const run = refresher.cancel(request.params.id);
     if (!run) {
       return envelope(fail({ code: "NOT_FOUND", message: `No refresh run ${request.params.id}` }));
@@ -443,6 +459,14 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
       value: number;
     };
   }>("/api/metrics", async (request) => {
+    if (!requireWrite(request)) {
+      return envelope(
+        fail({
+          code: "WRITE_GUARD_REJECTED",
+          message: "Metric recording requires a valid local session from an allowed origin"
+        })
+      );
+    }
     const parsed = metricSampleInputSchema.safeParse(request.body);
     if (!parsed.success) {
       return envelope(
@@ -620,6 +644,14 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
   app.post<{
     Body: { resourceId?: string; action?: string; adapterId?: string };
   }>("/api/actions/plan", async (request) => {
+    if (!requireWrite(request)) {
+      return envelope(
+        fail({
+          code: "WRITE_GUARD_REJECTED",
+          message: "Action planning requires a valid local session from an allowed origin"
+        })
+      );
+    }
     const resourceId = request.body.resourceId ?? "unknown";
     const action = request.body.action ?? "read";
 

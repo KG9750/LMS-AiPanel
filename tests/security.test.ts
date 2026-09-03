@@ -150,3 +150,26 @@ describe("S3: redaction rules", () => {
     });
   });
 });
+describe("M1: command endpoints reject missing sessions", () => {
+  it("refresh, metrics, and action plan require a session", async () => {
+    const built = await buildApp({ dataDir: path.join(tmpDir, "m1"), adapters: [], schedulerAutoStart: false });
+
+    const refresh = await built.app.inject({ method: "POST", url: "/api/refresh" });
+    expect(refresh.json().error.code).toBe("WRITE_GUARD_REJECTED");
+
+    const metrics = await built.app.inject({
+      method: "POST",
+      url: "/api/metrics",
+      payload: { scope: "s", layer: "endpoint", metric: "m", source: "x", coverage: "c", kind: "counter", value: 1 }
+    });
+    expect(metrics.json().error.code).toBe("WRITE_GUARD_REJECTED");
+
+    const plan = await built.app.inject({
+      method: "POST",
+      url: "/api/actions/plan",
+      payload: { resourceId: "x", action: "read" }
+    });
+    expect(plan.json().error.code).toBe("WRITE_GUARD_REJECTED");
+    await built.close();
+  });
+});

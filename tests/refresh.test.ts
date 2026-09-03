@@ -55,14 +55,20 @@ function makeAdapter(id: string, delayMs: number): StackAdapter {
 }
 
 describe("RefreshRun + SSE", () => {
+  async function sessionHeader(built: { app: import("fastify").FastifyInstance }): Promise<Record<string, string>> {
+    const issue = await built.app.inject({ method: "POST", url: "/api/session" });
+    return { "x-lms-session": issue.json().data.token as string };
+  }
+
   it("refresh returns a run id immediately and completes with a snapshot version", async () => {
     const built = await buildApp({
       dataDir: path.join(tmpDir, "basic"),
       adapters: [makeAdapter("alpha", 20)],
       schedulerAutoStart: false
     });
+    const auth = await sessionHeader(built);
 
-    const started = await built.app.inject({ method: "POST", url: "/api/refresh" });
+    const started = await built.app.inject({ method: "POST", url: "/api/refresh", headers: auth });
     expect(started.statusCode).toBe(200);
     const body = started.json();
     expect(body.ok).toBe(true);
@@ -95,8 +101,9 @@ describe("RefreshRun + SSE", () => {
     const unsubscribe = built.sseHub.subscribe((event) => {
       received.push(event.type);
     });
+    const auth = await sessionHeader(built);
 
-    await built.app.inject({ method: "POST", url: "/api/refresh" });
+    await built.app.inject({ method: "POST", url: "/api/refresh", headers: auth });
     for (let i = 0; i < 50; i++) {
       if (received.includes("snapshot")) break;
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -122,7 +129,8 @@ describe("RefreshRun + SSE", () => {
       schedulerAutoStart: false
     });
 
-    const started = await built.app.inject({ method: "POST", url: "/api/refresh" });
+    const auth = await sessionHeader(built);
+    const started = await built.app.inject({ method: "POST", url: "/api/refresh", headers: auth });
     const runId = started.json().data.runId;
 
     // Simulate a reconnect: a brand-new store read (same DB) still sees the run.
@@ -146,10 +154,11 @@ describe("RefreshRun + SSE", () => {
       schedulerAutoStart: false
     });
 
+    const auth = await sessionHeader(built);
     const [a, b, c] = await Promise.all([
-      built.app.inject({ method: "POST", url: "/api/refresh" }),
-      built.app.inject({ method: "POST", url: "/api/refresh" }),
-      built.app.inject({ method: "POST", url: "/api/refresh" })
+      built.app.inject({ method: "POST", url: "/api/refresh", headers: auth }),
+      built.app.inject({ method: "POST", url: "/api/refresh", headers: auth }),
+      built.app.inject({ method: "POST", url: "/api/refresh", headers: auth })
     ]);
     const runIds = [a.json().data.runId, b.json().data.runId, c.json().data.runId];
     expect(new Set(runIds).size).toBe(1);
@@ -163,9 +172,10 @@ describe("RefreshRun + SSE", () => {
       schedulerAutoStart: false
     });
 
-    const started = await built.app.inject({ method: "POST", url: "/api/refresh" });
+    const auth = await sessionHeader(built);
+    const started = await built.app.inject({ method: "POST", url: "/api/refresh", headers: auth });
     const runId = started.json().data.runId;
-    const cancelled = await built.app.inject({ method: "POST", url: `/api/refresh/${runId}/cancel` });
+    const cancelled = await built.app.inject({ method: "POST", url: `/api/refresh/${runId}/cancel`, headers: auth });
     expect(cancelled.json().data.status).toBe("cancelled");
     await built.close();
   });
@@ -176,7 +186,8 @@ describe("RefreshRun + SSE", () => {
       adapters: [makeAdapter("zeta", 0)],
       schedulerAutoStart: false
     });
-    await built.app.inject({ method: "POST", url: "/api/refresh" });
+    const auth = await sessionHeader(built);
+    await built.app.inject({ method: "POST", url: "/api/refresh", headers: auth });
     await new Promise((resolve) => setTimeout(resolve, 50));
     const res = await built.app.inject({ method: "GET", url: "/api/refresh" });
     const runs = res.json().data;

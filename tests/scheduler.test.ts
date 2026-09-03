@@ -216,7 +216,9 @@ describe("Scheduler", () => {
       schedulerAutoStart: false
     });
 
-    const res = await built.app.inject({ method: "POST", url: "/api/refresh" });
+    const issue = await built.app.inject({ method: "POST", url: "/api/session" });
+    const auth = { "x-lms-session": issue.json().data.token as string };
+    const res = await built.app.inject({ method: "POST", url: "/api/refresh", headers: auth });
     expect(res.json().ok).toBe(true);
     expect(res.json().data.status).toBe("running");
     expect(res.json().data.runId).toMatch(/^refresh:/);

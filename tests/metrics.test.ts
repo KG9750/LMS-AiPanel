@@ -108,10 +108,13 @@ describe("MetricStore counter epochs", () => {
 describe("metrics API", () => {
   it("records samples and returns current values with window deltas", async () => {
     const built = await buildApp({ dataDir: path.join(tmpDir, "api"), adapters: [], schedulerAutoStart: false });
+    const issue = await built.app.inject({ method: "POST", url: "/api/session" });
+    const auth = { "x-lms-session": issue.json().data.token as string };
     for (const value of [10, 25, 55]) {
       await built.app.inject({
         method: "POST",
         url: "/api/metrics",
+        headers: auth,
         payload: {
           scope: "omlx:endpoint:8000",
           layer: "endpoint",
@@ -137,9 +140,12 @@ describe("metrics API", () => {
 
   it("rejects invalid metric samples with a contract error", async () => {
     const built = await buildApp({ dataDir: path.join(tmpDir, "api2"), adapters: [], schedulerAutoStart: false });
+    const issue = await built.app.inject({ method: "POST", url: "/api/session" });
+    const auth = { "x-lms-session": issue.json().data.token as string };
     const res = await built.app.inject({
       method: "POST",
       url: "/api/metrics",
+      headers: auth,
       payload: { scope: "", layer: "nonsense", metric: "", source: "", coverage: "", kind: "counter", value: "x" }
     });
     expect(res.json().ok).toBe(false);
