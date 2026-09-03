@@ -307,28 +307,58 @@ export class AssistantAdapter implements StackAdapter {
     nodes.push(routeNode);
     edges.push(edge(definitionId, "uses", routeId));
 
-    // Live route: the endpoint's current model list, when reachable.
+    // Live route: probe the assistant's endpoint and compare what it
+    // actually serves. Drift = the endpoint is reachable AND the served
+    // model differs from the configured route. If the endpoint is
+    // unreachable, drift is UNKNOWN (not claimed).
     let live: string | undefined;
+    let endpointChecked = false;
     try {
-      const endpointRes = await fetch("http://127.0.0.1:8000/v1/models", { signal: AbortSignal.timeout(1_000) });
+      const endpointBase = (await this.readRouteEndpoint(configDir)) ?? "http://127.0.0.1:8000";
+      const endpointRes = await fetch(`${endpointBase}/v1/models`, { signal: AbortSignal.timeout(1_000) });
+      endpointChecked = true;
       if (endpointRes.ok) {
         const body = (await endpointRes.json()) as { data?: Array<{ id: string }> };
-        if (body.data?.some((model) => model.id === configured)) {
+        const served = (body.data ?? []).map((model) => model.id);
+        // The live route is the model the endpoint actually serves; when the
+        // configured model is NOT among them, the first served model is the
+        // live evidence (or undefined when the endpoint serves nothing).
+        if (served.includes(configured)) {
           live = configured;
+        } else if (served.length > 0) {
+          live = served[0];
         }
       }
     } catch {
       live = undefined;
     }
-    const drift = Boolean(live && live !== configured);
+    const drift = Boolean(endpointChecked && live && live !== configured);
     if (drift) {
       routeNode.state = "warning";
       routeNode.properties = {
         ...routeNode.properties,
         evidence: [`route drift: configured=${configured} live=${live}`]
       };
+    } else if (endpointChecked && !live) {
+      routeNode.properties = {
+        ...routeNode.properties,
+        evidence: ["endpoint reachable but serves no models; route drift unknown"]
+      };
     }
     return { configured, live, drift };
+  }
+
+  private async readRouteEndpoint(configDir: string): Promise<string | undefined> {
+    for (const file of ["agent.json", "config.json"]) {
+      try {
+        const raw = await fs.readFile(path.join(configDir, file), "utf8");
+        const parsed = JSON.parse(raw) as { endpoint?: string };
+        if (parsed.endpoint) return parsed.endpoint;
+      } catch {
+        // try next file
+      }
+    }
+    return undefined;
   }
 
   private async endpointReachable(endpoint: string | undefined): Promise<boolean> {

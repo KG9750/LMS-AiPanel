@@ -113,3 +113,46 @@ describe("Assistant adapter", () => {
     expect(channel.properties.failureState).toBe("channel-unreachable");
   });
 });
+describe("Assistant model route drift (M4)", () => {
+  it("detects drift when the endpoint serves a different model", async () => {
+    const http = await import("node:http");
+    // Fake endpoint serving a DIFFERENT model than configured.
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ object: "list", data: [{ id: "other-model-9b" }] }));
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as { port: number }).port;
+
+    await fs.mkdir(path.join(tmpDir, "Library", "LaunchAgents"), { recursive: true });
+    await fs.writeFile(
+      path.join(tmpDir, "Library", "LaunchAgents", "com.openclaw.hermes.plist"),
+      `<?xml version="1.0"?><plist><dict><key>Label</key><string>com.openclaw.hermes</string></dict></plist>`,
+      "utf8"
+    );
+    await write(
+      path.join(".openclaw", "agents", "hermes"),
+      "agent.json",
+      JSON.stringify({ model: "qwen2.5-32b", endpoint: `http://127.0.0.1:${port}` })
+    );
+
+    const result = await new AssistantAdapter().collect(CTX);
+    server.close();
+
+    const route = result.nodes.find((n) => n.id === "assistant:model:route:qwen2.5-32b")!;
+    expect(route.state).toBe("warning");
+    expect((route.properties.evidence as string[]).some((e) => e.includes("route drift"))).toBe(true);
+
+    // The definition aggregates the drift without hiding component evidence.
+    const definition = result.nodes.find((n) => n.id === "assistant:assistant:hermes")!;
+    expect(definition.properties.routeDrift).toBe(true);
+  });
+
+  it("does not claim drift when the endpoint is unreachable", async () => {
+    await write(path.join(".openclaw", "agents", "hermes"), "agent.json", JSON.stringify({ model: "m1", endpoint: "http://127.0.0.1:1" }));
+    const result = await new AssistantAdapter().collect(CTX);
+    const route = result.nodes.find((n) => n.id === "assistant:model:route:m1")!;
+    expect(route.state).toBe("ok");
+    expect((route.properties.evidence as string[]).some((e) => e.includes("route drift"))).toBe(false);
+  });
+});
