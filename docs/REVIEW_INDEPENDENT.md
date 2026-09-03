@@ -295,3 +295,34 @@ vite build                         # dist/client/index.html + 251.66 kB js + 10.
    - 冷启动 0.4s GET /api/graph → 请求内联完成全量收集。
 4. git 复核：无 sqlite/db/log/env/pem/key 入库；密钥正则无匹配；`redactionHints` 无消费方；`verifyCapabilities` 无路由；`audit_log` 表无 INSERT。
 5. 未验证项（诚实声明）：macOS 真机上的 LaunchAgent 冷启动、docker/launchctl 实采、oMLX/MLX/llama/Ollama 真机 start/stop、浏览器真实渲染与窄屏 QA、网关"人工真机客户端请求"——均无 macOS 环境，标 ➖。
+---
+
+# 修复状态（2026-09-03 第二轮）
+
+上表全部发现已按 P0 → P1 → P2 逐项修复并提交（`510279c` → `069369d`，共 8 个提交）。
+
+## 修复清单与验证
+
+| 发现 | 修复 | 验证 |
+|---|---|---|
+| S1 任意文件读取 + 密钥泄露 | 配置端点路径白名单（构建时 canonical realpath 集合）+ rawContent 行级脱敏 + 字段值级脱敏 | 黑盒复测：白名单外读取被拒（CONFIG_PATH_NOT_ALLOWED）；白名单内预览 rawContent/undocumentedFields 均无明文密钥 |
+| S2 任意文件写入 | apply 同白名单 + symlink 换绑检测 | 黑盒复测：白名单外 apply 被拒，受害文件未被改写；symlink 交换测试通过 |
+| S3 脱敏规则缺陷 | 重写为 token 级键匹配（author/helperScript 不再误伤，api_key/accessToken 仍脱敏）+ 值级密钥模式 + redactionHints 在快照边界消费 | tests/security.test.ts 12 个回归测试全过 |
+| M1 命令端点无守卫 | refresh/cancel/metrics/plan 全部加 session+origin 守卫 | 回归测试断言无会话被拒 |
+| M3 MCP 握手无 API | 新增 POST /api/mcp/:id/verify（managed + 会话限定） | managed 握手返回 serverInfo/tools，业务工具不触发 |
+| M4 路由漂移不可达 | live 证据取端点实际服务的模型，drift 可真实触发 | fake 端点服务不同模型 → warning + 聚合 routeDrift |
+| M5 冷启动 GET 阻塞 | 冷启动返回 v0 快照 + meta.collecting，scheduler.start 立即后台采集 | 回归测试：GET 不触发收集 |
+| M6 SSE 无历史回放 | SseHub 缓冲 200 条事件，订阅即重放 | 迟到订阅者收到 run→adapter→snapshot 完整序列 |
+| M7 客户端零接入 | session 获取、SSE 刷新进度、9 视图切换、配置中心编辑/应用、网关覆盖面板、审计面板、资源详情动作确认-执行流 | 4 个 jsdom 面板测试 + 生产冒烟全过 |
+
+## 终态验证
+
+- `npm test`: 25 个测试文件 / 138 个测试全过（修复前 116）
+- `npm run build`: 服务端 + 客户端构建干净
+- 生产冒烟：health / 冷启动 graph / 会话签发 / 带会话刷新 / 无会话拒绝 全部符合预期
+- 安全复扫：源码无明文密钥模式（仅测试夹具）
+
+## 遗留（需真机/人工）
+
+- macOS 真机 LaunchAgent 冷启动与真实浏览器窄屏 QA（本环境无法执行）
+- oMLX/MLX/llama/Ollama 真机 start/stop 验证（HITL 步骤，代码与隔离测试已就绪）
