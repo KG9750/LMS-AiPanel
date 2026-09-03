@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
@@ -6,7 +7,7 @@ import { nanoid } from "nanoid";
 import { createDisabledControlPlan, createReadPlan, gateActionPlan } from "../domain/actionGateway";
 import { ActionRunDriver, type AdapterActionExecutor } from "../domain/actionRun";
 import { evaluateDrift } from "../domain/drift";
-import { redactValue } from "../domain/redaction";
+import { redactConfigContent, redactValue } from "../domain/redaction";
 import { isStamped, stampHostId } from "../domain/scope";
 import { mergeRegistry } from "../domain/registryMerge";
 import { Scheduler } from "../domain/scheduler";
@@ -38,8 +39,11 @@ export interface AppOptions {
   port?: number;
   /** Session TTL in ms for tests (default 5 minutes). */
   sessionTtlMs?: number;
-  /** Default config file path for the Config Center preview. */
-  configPath?: string;
+  /**
+   * Config Center path whitelist (issue #19 fix): preview/diff/apply only
+   * operate on these exact realpaths. Defaults to ~/.codex/config.toml.
+   */
+  configPaths?: string[];
   /** Injectable adapters for tests. Defaults to the real read-only adapters. */
   adapters?: StackAdapter[];
   /** Per-adapter collection timeout in ms. */
@@ -68,6 +72,33 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
   const port = options.port ?? Number(process.env.LMS_AIPANEL_PORT ?? 3777);
   const storage = await ensureStorage();
   const host = getOrCreateHost(storage.db);
+
+  // Config Center path whitelist: only these exact files (realpath-checked)
+  // can be previewed, diffed, or applied. Prevents arbitrary file read/write.
+  // The whitelist is the CANONICAL (realpath) set captured at build time:
+  // if the whitelisted file is later replaced by a symlink, the request's
+  // realpath no longer belongs to the canonical set and is rejected.
+  const configPaths = (options.configPaths && options.configPaths.length > 0
+    ? options.configPaths
+    : [path.join(os.homedir(), ".codex", "config.toml")]
+  ).map((p) => path.resolve(p));
+  const canonicalConfigPaths = new Set<string>();
+  for (const p of configPaths) {
+    try {
+      canonicalConfigPaths.add(await fs.realpath(p));
+    } catch {
+      // whitelisted file does not exist yet: fall back to the literal path
+      canonicalConfigPaths.add(p);
+    }
+  }
+  const isAllowedConfigPath = async (requested: string): Promise<boolean> => {
+    try {
+      const real = await fs.realpath(path.resolve(requested));
+      return canonicalConfigPaths.has(real);
+    } catch {
+      return false;
+    }
+  };
 
   const adapters = options.adapters ?? createAdapters();
 
@@ -809,9 +840,17 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
 
   /** Reads a structured preview of the supported config file. */
   app.get<{ Querystring: { path?: string } }>("/api/config/preview", async (request) => {
-    const filePath = request.query.path ?? options.configPath ?? "";
+    const filePath = request.query.path ?? configPaths[0];
     if (!filePath) {
       return envelope(fail({ code: "CONFIG_PATH_REQUIRED", message: "config path is required" }));
+    }
+    if (!(await isAllowedConfigPath(filePath))) {
+      return envelope(
+        fail({
+          code: "CONFIG_PATH_NOT_ALLOWED",
+          message: "this path is not in the Config Center whitelist"
+        })
+      );
     }
     try {
       const preview = await configCenter.readPreview(filePath);
@@ -830,10 +869,25 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
   app.post<{ Body: { path?: string; content?: string } }>("/api/config/diff", async (request) => {
     const filePath = request.body.path ?? "";
     const content = request.body.content ?? "";
+    if (!(await isAllowedConfigPath(filePath))) {
+      return envelope(
+        fail({
+          code: "CONFIG_PATH_NOT_ALLOWED",
+          message: "this path is not in the Config Center whitelist"
+        })
+      );
+    }
     try {
       const current = await fs.readFile(filePath, "utf8");
       const preview = await configCenter.readPreview(filePath);
-      const diff = configCenter.diff(current, content);
+      // The diff is computed against the RAW file but rendered redacted:
+      // both sides of the diff pass through the same redaction as the
+      // preview so secrets never leave the API.
+      const rawDiff = configCenter.diff(current, content);
+      const diff = rawDiff.map((line) => ({
+        ...line,
+        line: redactConfigContent(line.line)
+      }));
       return envelope(ok({ diff, previewHash: preview.previewHash, fresh: await configCenter.previewIsFresh(preview) }));
     } catch (error) {
       return envelope(fail({ code: "CONFIG_DIFF_FAILED", message: error instanceof Error ? error.message : String(error) }));
@@ -853,6 +907,14 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
     const filePath = request.body.path ?? "";
     const content = request.body.content ?? "";
     const previewHash = request.body.previewHash ?? "";
+    if (!(await isAllowedConfigPath(filePath))) {
+      return envelope(
+        fail({
+          code: "CONFIG_PATH_NOT_ALLOWED",
+          message: "this path is not in the Config Center whitelist"
+        })
+      );
+    }
     try {
       const preview = await configCenter.readPreview(filePath);
       if (preview.previewHash !== previewHash) {

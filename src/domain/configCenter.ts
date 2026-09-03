@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { redactConfigContent, redactValue } from "./redaction";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { nanoid } from "nanoid";
@@ -168,14 +169,14 @@ export class ConfigCenter {
       sensitive: spec.sensitive,
       version: spec.version,
       restartRequired: spec.restartRequired,
-      value: parsed[spec.key],
+      value: spec.sensitive ? redactValue(parsed[spec.key]) : parsed[spec.key],
       valuePresent: Object.prototype.hasOwnProperty.call(parsed, spec.key),
       documented: true
     }));
 
     const undocumentedFields = Object.entries(parsed)
       .filter(([key]) => !CODEX_FIELD_SPECS.some((spec) => spec.key === key))
-      .map(([key, value]) => ({ key, value }));
+      .map(([key, value]) => ({ key, value: redactValue(value) }));
 
     return {
       configType: CONFIG_TYPE_CODEX,
@@ -183,7 +184,8 @@ export class ConfigCenter {
       fileHash,
       documentedFields,
       undocumentedFields,
-      rawContent,
+      // Raw preview is line-redacted so secrets never leave the API.
+      rawContent: redactConfigContent(rawContent),
       previewHash: fileHash
     };
   }

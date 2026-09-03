@@ -3,6 +3,7 @@ import type { AdapterRuntime } from "../adapters/runtime";
 import type { StackAdapter } from "../adapters/types";
 import { evaluateDrift } from "../domain/drift";
 import { mergeRegistry } from "../domain/registryMerge";
+import { applyRedactionHints } from "../domain/redaction";
 import { stampHostId } from "../domain/scope";
 import type { RegistryRepository } from "../storage/registry";
 import type { SnapshotStore } from "../storage/snapshots";
@@ -92,7 +93,10 @@ export class Scheduler {
     const selected = this.selectAdapters(mode);
     const collected = await this.runtime.collectSelected(selected);
     const stamped = stampHostId(collected.result.nodes, this.host.hostId);
-    const merged = mergeRegistry(stamped, this.registry.list());
+    // Adapter redaction hints are consumed at the snapshot boundary so
+    // hinted values never reach storage or the API.
+    const hinted = applyRedactionHints(stamped, collected.result.redactionHints);
+    const merged = mergeRegistry(hinted, this.registry.list());
     const driftRecords = evaluateDrift(merged.nodes);
 
     const snapshot: SystemSnapshot = {

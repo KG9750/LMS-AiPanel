@@ -32,7 +32,7 @@ afterEach(async () => {
 
 describe("Config Center", () => {
   it("exposes meaning, type, source, sensitivity, version, and restart requirements per field", async () => {
-    const built = await buildApp({ dataDir: path.join(tmpDir, "data"), adapters: [], schedulerAutoStart: false });
+    const built = await buildApp({ dataDir: path.join(tmpDir, "data"), adapters: [], schedulerAutoStart: false, configPaths: [configFile] });
     const res = await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(configFile)}` });
     const preview = res.json().data;
 
@@ -53,7 +53,7 @@ describe("Config Center", () => {
   });
 
   it("unknown fields survive a round trip and are labeled undocumented", async () => {
-    const built = await buildApp({ dataDir: path.join(tmpDir, "data2"), adapters: [], schedulerAutoStart: false });
+    const built = await buildApp({ dataDir: path.join(tmpDir, "data2"), adapters: [], schedulerAutoStart: false, configPaths: [configFile] });
     const res = await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(configFile)}` });
     const preview = res.json().data;
 
@@ -76,7 +76,7 @@ describe("Config Center", () => {
   });
 
   it("an external file change invalidates the preview before apply", async () => {
-    const built = await buildApp({ dataDir: path.join(tmpDir, "data3"), adapters: [], schedulerAutoStart: false });
+    const built = await buildApp({ dataDir: path.join(tmpDir, "data3"), adapters: [], schedulerAutoStart: false, configPaths: [configFile] });
     const res = await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(configFile)}` });
     const preview = res.json().data;
 
@@ -101,7 +101,7 @@ describe("Config Center", () => {
   });
 
   it("apply creates ActionRun and audit evidence with backup", async () => {
-    const built = await buildApp({ dataDir: path.join(tmpDir, "data4"), adapters: [], schedulerAutoStart: false });
+    const built = await buildApp({ dataDir: path.join(tmpDir, "data4"), adapters: [], schedulerAutoStart: false, configPaths: [configFile] });
     const res = await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(configFile)}` });
     const preview = res.json().data;
     const issue = await built.app.inject({ method: "POST", url: "/api/session" });
@@ -139,7 +139,7 @@ describe("Config Center", () => {
   });
 
   it("diff preview shows added/removed lines", async () => {
-    const built = await buildApp({ dataDir: path.join(tmpDir, "data5"), adapters: [], schedulerAutoStart: false });
+    const built = await buildApp({ dataDir: path.join(tmpDir, "data5"), adapters: [], schedulerAutoStart: false, configPaths: [configFile] });
     const res = await built.app.inject({
       method: "POST",
       url: "/api/config/diff",
@@ -153,7 +153,7 @@ describe("Config Center", () => {
   });
 
   it("apply without a session is rejected by the write guard", async () => {
-    const built = await buildApp({ dataDir: path.join(tmpDir, "data6"), adapters: [], schedulerAutoStart: false });
+    const built = await buildApp({ dataDir: path.join(tmpDir, "data6"), adapters: [], schedulerAutoStart: false, configPaths: [configFile] });
     const res = await built.app.inject({
       method: "POST",
       url: "/api/config/apply",
@@ -166,7 +166,7 @@ describe("Config Center", () => {
 
 describe("ConfigCenter direct", () => {
   it("restore path works in temporary directories only", async () => {
-    const built = await buildApp({ dataDir: path.join(tmpDir, "direct"), adapters: [], schedulerAutoStart: false });
+    const built = await buildApp({ dataDir: path.join(tmpDir, "direct"), adapters: [], schedulerAutoStart: false, configPaths: [configFile] });
     const center = new ConfigCenter(built.storage.db, built.host.hostId);
     const preview = await center.readPreview(configFile);
     const outcome = await center.apply(preview, UPDATED, "action:test");
