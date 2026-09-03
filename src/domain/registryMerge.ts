@@ -29,7 +29,6 @@ export function mergeRegistry(
   const nodesById = new Map(nodes.map((node) => [node.id, { ...node }]));
   const merges: RegistryMerge[] = [];
   const attention: MergeOutcome["attention"] = [];
-  const seenEntryIds = new Set<string>();
 
   const conflict = (resourceId: string, message: string) => {
     attention.push({ resourceId, message });
@@ -53,7 +52,6 @@ export function mergeRegistry(
     const key = entryKey(entry);
     const matched = [...nodesById.values()].find((node) => matchKey(node) === key);
     if (matched) {
-      seenEntryIds.add(entry.id);
       if (matched.properties.registryEntryId && matched.properties.registryEntryId !== entry.id) {
         conflict(matched.id, `conflicting registry matches (${matched.properties.registryEntryId} vs ${entry.id})`);
         merges.push({
@@ -101,7 +99,6 @@ export function mergeRegistry(
 
     // No discovery match: a supplement entry materializes an unverified resource.
     if (entry.kind === "supplement") {
-      seenEntryIds.add(entry.id);
       const id = `${entry.adapterId ?? "registry"}:${entry.resourceType}:${entry.stableKey}`;
       const materialized: ResourceNode = {
         id,

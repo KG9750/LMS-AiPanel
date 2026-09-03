@@ -68,7 +68,3 @@ export function pathKey(filePath: string): string {
   return `path-${stableHash(filePath)}`;
 }
 
-export function safeBaseName(filePath: string): string {
-  return path.basename(filePath);
-}
-

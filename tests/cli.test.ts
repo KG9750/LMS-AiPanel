@@ -43,7 +43,6 @@ function runCli(args: string[], timeoutMs = 20_000): { status: number; stdout: s
 
 describe("management CLI (issue #22)", () => {
   it("builds a LaunchAgent plist that binds 127.0.0.1 and keeps runtime data outside the repo", async () => {
-    const { spawnSync } = await import("node:child_process");
     // Invoke the CLI on macOS to install; on other platforms install is
     // unsupported — verify the plist content function indirectly by checking
     // the CLI help exposes install and the data dir.
@@ -53,7 +52,6 @@ describe("management CLI (issue #22)", () => {
     expect(help.stdout).toContain("logs");
     expect(help.stdout).toContain("upgrade");
     expect(help.stdout).toContain(dataDir); // runtime data outside the repo
-    void spawnSync;
   });
 
   it("status verifies process AND health endpoint, not just metadata", async () => {

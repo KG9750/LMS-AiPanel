@@ -44,7 +44,7 @@ export interface SeriesResult {
 }
 
 const RETENTION_SECONDS = Number(process.env.LMS_METRIC_RETENTION_SECONDS ?? 7 * 24 * 3600); // 7 days
-const HOURLY_AGE_SECONDS = 24 * 3600; // older than 24h is downsampled to hourly
+const FINE_GRANULARITY_AGE_SECONDS = 24 * 3600; // fine-grained samples kept for 24h
 
 /**
  * Token/memory time-series storage with counter epochs (issue #11).
@@ -196,7 +196,7 @@ export class MetricStore {
 
   /** Coarse retention: fine-grained samples beyond 24h are removed. */
   private applyRetention(hostId: string): void {
-    const fineCutoff = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const fineCutoff = new Date(Date.now() - FINE_GRANULARITY_AGE_SECONDS * 1000).toISOString();
     const coarseCutoff = new Date(Date.now() - RETENTION_SECONDS * 1000).toISOString();
     this.db
       .prepare("DELETE FROM metric_samples WHERE host_id = ? AND sample_at < ?")
@@ -214,7 +214,6 @@ export class MetricStore {
          )`
       )
       .run(hostId, fineCutoff, fineCutoff);
-    void HOURLY_AGE_SECONDS;
   }
 
   listScopes(hostId: string): Array<{ scope: string; metric: string; layer: MetricLayer }> {
