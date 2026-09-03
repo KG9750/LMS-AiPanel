@@ -17,6 +17,8 @@ import type {
 import { HostBadge, type HostInfo } from "./hostBadge";
 import { ResourceDetail } from "./resourceDetail";
 import { buildOperations } from "./operations";
+import { apiFetch, ensureSession, readFetch } from "./api";
+import { AuditPanel, ConfigCenterPanel, GatewayPanel, ResourceListView } from "./views";
 import "./styles.css";
 
 const queryClient = new QueryClient();
@@ -203,20 +205,17 @@ const SEVERITY_INFO: Record<DriftRecord["severity"], { label: string; descriptio
   }
 };
 
-async function fetchGraph(): Promise<SystemSnapshot> {
-  const response = await fetch("/api/graph");
-  const envelope = (await response.json()) as ApiEnvelope<SystemSnapshot>;
-  if (!envelope.ok) {
-    throw new Error(envelope.error.message);
-  }
-  return envelope.data;
-}
-
 function App() {
   const [detailId, setDetailId] = React.useState<string | null>(() => {
     const match = window.location.hash.match(/^#\/resource\/(.+)$/);
     return match ? decodeURIComponent(match[1]) : null;
   });
+  const [view, setView] = React.useState<string>("运行总览");
+  const [sessionReady, setSessionReady] = React.useState(false);
+  const [toast, setToast] = React.useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const [refreshProgress, setRefreshProgress] = React.useState("");
+  const [collecting, setCollecting] = React.useState(false);
+
   const openDetail = (id: string) => {
     window.location.hash = `#/resource/${encodeURIComponent(id)}`;
     setDetailId(id);
@@ -234,11 +233,65 @@ function App() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
+  const notify = (kind: "ok" | "error", text: string) => {
+    setToast({ kind, text });
+    setTimeout(() => setToast(null), 6_000);
+  };
+
+  // M7: acquire the short-lived local session once (re-issued on expiry).
+  React.useEffect(() => {
+    let cancelled = false;
+    ensureSession()
+      .then(() => {
+        if (!cancelled) setSessionReady(true);
+      })
+      .catch((error) => notify("error", `会话获取失败：${(error as Error).message}`));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const { data, error, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["graph"],
-    queryFn: fetchGraph,
+    queryFn: async () => {
+      const response = await fetch("/api/graph");
+      const envelope = (await response.json()) as ApiEnvelope<SystemSnapshot> & { meta?: { collecting?: boolean } };
+      if (!envelope.ok) {
+        throw new Error(envelope.error.message);
+      }
+      setCollecting(Boolean(envelope.meta?.collecting));
+      return envelope.data;
+    },
     refetchInterval: 15_000
   });
+
+  // M7: manual refresh with SSE progress (issue #5 UI).
+  const startRefresh = async () => {
+    try {
+      const run = await apiFetch<{ runId: string; status: string }>("/api/refresh", { method: "POST" });
+      setRefreshProgress(`刷新已开始（${run.runId.slice(0, 18)}…）`);
+      const source = new EventSource("/api/refresh/events");
+      source.addEventListener("adapter", (event) => {
+        const data = JSON.parse((event as MessageEvent).data) as { adapterId: string; status: string };
+        setRefreshProgress(`采集器 ${data.adapterId} → ${data.status}`);
+      });
+      source.addEventListener("snapshot", (event) => {
+        const data = JSON.parse((event as MessageEvent).data) as { snapshotVersion: number };
+        setRefreshProgress(`快照 v${data.snapshotVersion} 完成`);
+        source.close();
+        void refetch();
+      });
+      source.addEventListener("run", (event) => {
+        const data = JSON.parse((event as MessageEvent).data) as { status: string };
+        if (data.status === "failed" || data.status === "cancelled") {
+          setRefreshProgress(`刷新${data.status === "failed" ? "失败" : "已取消"}`);
+          source.close();
+        }
+      });
+    } catch (err) {
+      notify("error", `刷新失败：${(err as Error).message}`);
+    }
+  };
 
   if (isLoading) {
     return <div className="screen center">正在加载 AI 工作栈快照...</div>;
@@ -272,8 +325,8 @@ function App() {
     <div className="app">
       <aside className="sidebar">
         <div className="brand">LMS-AiPanel</div>
-        {NAV_ITEMS.map((item, index) => (
-          <button className={index === 0 ? "nav active" : "nav"} key={item}>
+        {NAV_ITEMS.map((item) => (
+          <button className={view === item ? "nav active" : "nav"} key={item} onClick={() => setView(item)}>
             <span className="nav-dot" />
             {item}
           </button>
@@ -283,10 +336,16 @@ function App() {
       <main className="main">
         <header className="topbar">
           <div>
-            <h1>运行总览</h1>
+            <h1>{view}</h1>
             <p>仅本机访问的 AI 工作栈控制面板</p>
           </div>
           <div className="top-actions">
+            {refreshProgress && (
+              <span className="refresh-progress" title="SSE 实时进度">
+                {refreshProgress}
+              </span>
+            )}
+            {collecting && <span className="refresh-progress">正在采集首个快照…</span>}
             <HostBadge info={hostInfo} />
             <Explain
               as="span"
@@ -295,10 +354,19 @@ function App() {
             >
               127.0.0.1
             </Explain>
+            {view === "运行总览" && (
+              <button onClick={() => void startRefresh()} disabled={!sessionReady}>
+                {isFetching ? "正在刷新" : "手动刷新（SSE）"}
+              </button>
+            )}
             <button onClick={() => void refetch()}>{isFetching ? "正在刷新" : "刷新快照"}</button>
           </div>
         </header>
 
+        {toast && <div className={`toast ${toast.kind}`}>{toast.text}</div>}
+
+        {view === "运行总览" && (
+          <>
         <section className="operations">
           <div className="panel attention-panel">
             <div className="panel-head">
@@ -501,6 +569,41 @@ function App() {
             </div>
           </div>
         </section>
+          </>
+        )}
+
+        {view !== "运行总览" && view !== "配置中心" && view !== "审计日志" && (
+          <section className="content-grid">
+            <ResourceListView view={view} nodes={snapshot.nodes} onOpen={openDetail} />
+          </section>
+        )}
+
+        {view === "配置中心" && (
+          <section className="content-grid">
+            <ConfigCenterPanel onMessage={notify} />
+          </section>
+        )}
+
+        {view === "审计日志" && (
+          <section className="content-grid">
+            <AuditPanel />
+          </section>
+        )}
+
+        {view === "运行总览" && (
+          <section className="content-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+            <GatewayPanel onMessage={notify} />
+            <div className="panel">
+              <div className="panel-head">
+                <h2>运行指标</h2>
+                <span>遥测入口</span>
+              </div>
+              <p className="empty">
+                Token/内存时间序列已接入（/api/metrics/series）。资源详情视图展示每个资源的当前值与窗口增量。
+              </p>
+            </div>
+          </section>
+        )}
       </main>
 
       {detailId && <ResourceDetail resourceId={detailId} onClose={closeDetail} />}

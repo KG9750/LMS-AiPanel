@@ -1,4 +1,6 @@
+import React from "react";
 import { useQuery } from "@tanstack/react-query";
+import { apiFetch } from "./api";
 import type {
   ActionPlan,
   AdapterRunStatus,
@@ -53,6 +55,46 @@ const RELATION_LABEL: Record<string, string> = {
  * drift, and audit history.
  */
 export function ResourceDetail({ resourceId, onClose }: { resourceId: string; onClose: () => void }) {
+  const [runningAction, setRunningAction] = React.useState<string | null>(null);
+  const [actionStatus, setActionStatus] = React.useState<{ kind: "ok" | "error"; text: string } | null>(null);
+
+  // M7: full Action Gateway flow — plan -> create run -> confirm -> execute.
+  const runAction = async (action: string) => {
+    setRunningAction(action);
+    setActionStatus(null);
+    try {
+      const plan = await apiFetch<{ actionId: string; disabledReason?: string }>("/api/actions/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resourceId, action })
+      });
+      if (plan.disabledReason) {
+        setActionStatus({ kind: "error", text: `不可执行：${plan.disabledReason}` });
+        return;
+      }
+      const run = await apiFetch<{ runId: string; status: string }>("/api/actions/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resourceId, action, planId: plan.actionId })
+      });
+      await apiFetch(`/api/actions/runs/${run.runId}/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision: "confirm" })
+      });
+      const executed = await apiFetch<{ status: string }>(`/api/actions/runs/${run.runId}/execute`, { method: "POST" });
+      setActionStatus({
+        kind: executed.status === "succeeded" ? "ok" : "error",
+        text: `动作 ${action} → ${executed.status}（验证证据决定结果）`
+      });
+    } catch (err) {
+      const e = err as Error & { code?: string };
+      setActionStatus({ kind: "error", text: `${e.code ?? "执行失败"}：${e.message}` });
+    } finally {
+      setRunningAction(null);
+    }
+  };
+
   const { data, error, isLoading } = useQuery({
     queryKey: ["resource", resourceId],
     queryFn: async (): Promise<ResourceDetail> => {
@@ -175,12 +217,18 @@ export function ResourceDetail({ resourceId, onClose }: { resourceId: string; on
               {data.managed && data.availableActions.length > 0 && (
                 <div className="action-chips">
                   {data.availableActions.map((action) => (
-                    <span key={action} className="action-chip">
-                      {action}
-                    </span>
+                    <button
+                      key={action}
+                      className="action-chip"
+                      disabled={runningAction !== null}
+                      onClick={() => void runAction(action)}
+                    >
+                      {runningAction === action ? "执行中..." : action}
+                    </button>
                   ))}
                 </div>
               )}
+              {actionStatus && <p className={`action-status ${actionStatus.kind}`}>{actionStatus.text}</p>}
             </section>
 
             <section>
