@@ -1064,6 +1064,67 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
     await gateway.proxy(request, reply);
   });
 
+  // ---- MCP capability handshake (issue #21 fix, M3) ----
+
+  /**
+   * Manual capability inspection for a managed MCP server. Automatic
+   * collection never starts servers or handshakes; this explicit command
+   * requires a valid session AND a managed registry entry for the server.
+   */
+  app.post<{ Params: { id: string } }>("/api/mcp/:id/verify", async (request) => {
+    if (!requireWrite(request)) {
+      return envelope(
+        fail({
+          code: "WRITE_GUARD_REJECTED",
+          message: "MCP capability inspection requires a valid local session"
+        })
+      );
+    }
+    const serverId = decodeURIComponent(request.params.id);
+    const mcpAdapter = validAdapters.find((adapter) => adapter.id === "mcp");
+    if (!mcpAdapter || !("getServerSpec" in mcpAdapter)) {
+      return envelope(fail({ code: "MCP_ADAPTER_UNAVAILABLE", message: "MCP adapter is not registered" }));
+    }
+
+    // Managed gate: the server must have a managed registry entry.
+    const snapshot = latestSnapshot();
+    const resource = snapshot?.nodes.find((node) => node.id === serverId);
+    const managed = resource?.properties.registryManaged === true;
+    if (!managed) {
+      return envelope(
+        fail({
+          code: "MCP_NOT_MANAGED",
+          message: "capability inspection requires a managed MCP server (registry entry with managed=true)"
+        })
+      );
+    }
+
+    const resolved = await (mcpAdapter as { getServerSpec(id: string): Promise<{ serverName: string; spec: Record<string, unknown>; configLabel: string } | null> }).getServerSpec(serverId);
+    if (!resolved) {
+      return envelope(fail({ code: "MCP_SERVER_NOT_FOUND", message: `no MCP server spec for ${serverId}` }));
+    }
+
+    const outcome = await (mcpAdapter as unknown as { verifyCapabilities(name: string, spec: Record<string, unknown>, timeoutMs: number): Promise<{ ok: boolean; capabilities: Record<string, unknown>; evidence: string[]; error?: string }> }).verifyCapabilities(
+      resolved.serverName,
+      resolved.spec,
+      5_000
+    );
+
+    auditLog.push({
+      id: `audit:${nanoid()}`,
+      timestamp: new Date().toISOString(),
+      actor: "local-user",
+      action: "mcp:verify",
+      resourceId: serverId,
+      result: outcome.ok ? "verified" : "failed",
+      evidence: outcome.evidence
+    });
+    if (!outcome.ok) {
+      return envelope(fail({ code: "MCP_HANDSHAKE_FAILED", message: outcome.error ?? "handshake failed", evidence: outcome.evidence }));
+    }
+    return envelope(ok({ serverId, ...outcome.capabilities, evidence: outcome.evidence }));
+  });
+
   app.get("/api/audit", async () => envelope(ok(auditLog)));
 
   const clientDist = path.join(process.cwd(), "dist", "client");

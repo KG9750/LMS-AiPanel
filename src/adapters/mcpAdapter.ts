@@ -107,6 +107,33 @@ export class McpAdapter implements StackAdapter {
     return { adapterId: this.id, alive: this.lastError === undefined, lastError: this.lastError };
   }
 
+  /**
+   * Resolves a server spec by its stable resource id
+   * (`mcp:mcp:<configKey>:<serverName>`). Used by the manual capability
+   * handshake route — never invoked during automatic collection.
+   */
+  async getServerSpec(serverId: string): Promise<{ serverName: string; spec: McpServerSpec; configLabel: string } | null> {
+    const prefix = "mcp:mcp:";
+    if (!serverId.startsWith(prefix)) return null;
+    const rest = serverId.slice(prefix.length);
+    const separatorIndex = rest.indexOf(":");
+    if (separatorIndex <= 0) return null;
+    const key = rest.slice(0, separatorIndex);
+    const serverName = rest.slice(separatorIndex + 1);
+    if (!serverName) return null;
+
+    for (const configPath of configCandidates()) {
+      if (configKey(configPath) !== key) continue;
+      if (!(await pathExists(configPath))) continue;
+      const servers = await readServers(configPath);
+      const entry = servers.find(([name]) => name === serverName);
+      if (entry) {
+        return { serverName, spec: entry[1], configLabel: configLabel(configPath) };
+      }
+    }
+    return null;
+  }
+
   private stateFor(layers: { runtime: string; reachable: boolean; capabilityVerified: boolean }): "ok" | "running" | "warning" | "unknown" {
     if (layers.capabilityVerified) return "ok";
     if (layers.reachable) return "running";
@@ -259,4 +286,13 @@ function configLabel(configPath: string): string {
   if (configPath.includes(".lmstudio")) return "LM Studio mcp.json";
   if (configPath.includes("antigravity")) return "Antigravity mcp_config.json";
   return "MCP config";
+}
+
+// Computed dynamically so homedir mocks (tests) and runtime env changes work.
+function configCandidates(): string[] {
+  return [
+    homePath(".codex", "config.toml"),
+    homePath(".lmstudio", "mcp.json"),
+    homePath(".gemini", "antigravity", "mcp_config.json")
+  ];
 }

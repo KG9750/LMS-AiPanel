@@ -131,3 +131,60 @@ describe("MCP adapter three-layer inspection", () => {
     expect(server.properties.runtimeLayer).toBe("stopped");
   });
 });
+describe("MCP capability handshake API (M3)", () => {
+  it("rejects unmanaged servers and requires a session", async () => {
+    await writeCodexConfig({ files: { command: "/usr/bin/fake-mcp" } });
+    const { buildApp } = await import("../src/server/app");
+    const built = await buildApp({ dataDir: path.join(tmpDir, "api-m3"), adapters: [new McpAdapter()], schedulerAutoStart: false });
+    await built.scheduler.collect("all");
+
+    // No session -> rejected.
+    const noSession = await built.app.inject({ method: "POST", url: "/api/mcp/mcp%3Amcp%3Acodex-config%3Afiles/verify" });
+    expect(noSession.json().error.code).toBe("WRITE_GUARD_REJECTED");
+
+    // With session but NOT managed -> rejected.
+    const issue = await built.app.inject({ method: "POST", url: "/api/session" });
+    const auth = { "x-lms-session": issue.json().data.token as string };
+    const unmanaged = await built.app.inject({
+      method: "POST",
+      url: "/api/mcp/mcp%3Amcp%3Acodex-config%3Afiles/verify",
+      headers: auth
+    });
+    expect(unmanaged.json().error.code).toBe("MCP_NOT_MANAGED");
+    await built.close();
+  });
+
+  it("verifies capabilities for a managed server without invoking business tools", async () => {
+    const { buildApp } = await import("../src/server/app");
+    const fake = await startMcpEndpoint();
+    await writeCodexConfig({ live: { url: `http://127.0.0.1:${fake.port}` } });
+    const built = await buildApp({ dataDir: path.join(tmpDir, "api-m3b"), adapters: [new McpAdapter()], schedulerAutoStart: false });
+    await built.scheduler.collect("all");
+
+    // Mark the server managed via the registry.
+    const issue = await built.app.inject({ method: "POST", url: "/api/session" });
+    const token = issue.json().data.token as string;
+    const auth = { "x-lms-session": token };
+    await built.app.inject({
+      method: "POST",
+      url: "/api/registry",
+      headers: auth,
+      payload: { kind: "match", adapterId: "mcp", resourceType: "mcp", stableKey: "codex-config:live", label: "live", managed: true }
+    });
+    await built.scheduler.collect("all");
+
+    const res = await built.app.inject({
+      method: "POST",
+      url: "/api/mcp/mcp%3Amcp%3Acodex-config%3Alive/verify",
+      headers: auth
+    });
+    const body = res.json();
+    expect(body.ok).toBe(true);
+    expect(body.data.serverInfo).toEqual({ name: "fake-mcp", version: "1.0.0" });
+    expect(body.data.tools.sort()).toEqual(["read_file", "search_web"]);
+    // Only capability metadata; no business results.
+    expect(JSON.stringify(body.data)).not.toMatch(/tools\/call/);
+    await fake.close();
+    await built.close();
+  });
+});
