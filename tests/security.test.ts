@@ -19,25 +19,38 @@ afterEach(async () => {
   await fs.rm(tmpDir, { recursive: true, force: true });
 });
 
+async function sessionHeader(built: { app: import("fastify").FastifyInstance }): Promise<Record<string, string>> {
+  const issue = await built.app.inject({ method: "POST", url: "/api/session" });
+  return { "x-lms-session": issue.json().data.token as string };
+}
+
 describe("S1: config endpoints cannot read arbitrary files", () => {
   it("preview rejects paths outside the whitelist", async () => {
     const secret = path.join(tmpDir, "secret.txt");
     await fs.writeFile(secret, "top secret", "utf8");
     const built = await buildApp({ dataDir: path.join(tmpDir, "data"), adapters: [], schedulerAutoStart: false, configPaths: [configFile] });
+    const auth = await sessionHeader(built);
 
-    const res = await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(secret)}` });
+    const res = await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(secret)}`,
+      headers: auth
+    });
     expect(res.json().ok).toBe(false);
     expect(res.json().error.code).toBe("CONFIG_PATH_NOT_ALLOWED");
 
     // The whitelisted path still works.
-    const ok = await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(configFile)}` });
+    const ok = await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(configFile)}`,
+      headers: auth
+    });
     expect(ok.json().ok).toBe(true);
     await built.close();
   });
 
   it("preview never returns plaintext secrets in rawContent or fields", async () => {
     const built = await buildApp({ dataDir: path.join(tmpDir, "data2"), adapters: [], schedulerAutoStart: false, configPaths: [configFile] });
-    const res = await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(configFile)}` });
+    const auth = await sessionHeader(built);
+    const res = await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(configFile)}`,
+      headers: auth
+    });
     const data = res.json().data;
     expect(data.rawContent).not.toContain("sk-real-secret-abc");
     expect(data.rawContent).toContain('"<redacted>"');
@@ -48,9 +61,11 @@ describe("S1: config endpoints cannot read arbitrary files", () => {
 
   it("diff rejects paths outside the whitelist", async () => {
     const built = await buildApp({ dataDir: path.join(tmpDir, "data3"), adapters: [], schedulerAutoStart: false, configPaths: [configFile] });
+    const auth = await sessionHeader(built);
     const res = await built.app.inject({
       method: "POST",
       url: "/api/config/diff",
+      headers: auth,
       payload: { path: "/etc/passwd", content: "x" }
     });
     expect(res.json().error.code).toBe("CONFIG_PATH_NOT_ALLOWED");
@@ -80,12 +95,15 @@ describe("S2: config apply cannot write arbitrary files", () => {
     // Build while the whitelisted file is a REGULAR file (canonical set
     // captured at build time), then swap it for a symlink to a victim.
     const built = await buildApp({ dataDir: path.join(tmpDir, "data5"), adapters: [], schedulerAutoStart: false, configPaths: [configFile] });
+    const auth = await sessionHeader(built);
     const victim = path.join(tmpDir, "victim.toml");
     await fs.writeFile(victim, 'model = "original"\n', "utf8");
     await fs.rm(configFile);
     await fs.symlink(victim, configFile);
 
-    const res = await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(configFile)}` });
+    const res = await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(configFile)}`,
+      headers: auth
+    });
     expect(res.json().ok).toBe(false);
     expect(res.json().error.code).toBe("CONFIG_PATH_NOT_ALLOWED");
     await built.close();
@@ -179,10 +197,13 @@ describe("N1: preview -> apply round trip preserves secrets", () => {
     const cfg = path.join(tmpDir, "roundtrip.toml");
     await fs.writeFile(cfg, 'model = "gpt-5"\ntoken = "sk-real-secret-abc"\n', "utf8");
     const built = await buildApp({ dataDir: path.join(tmpDir, "n1"), adapters: [], schedulerAutoStart: false, configPaths: [cfg] });
+    const auth = await sessionHeader(built);
 
     // Client flow: read the redacted preview, edit a non-sensitive field,
     // and apply the draft as-is.
-    const preview = (await (await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(cfg)}` })).json()).data;
+    const preview = (await (await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(cfg)}`,
+      headers: auth
+    })).json()).data;
     expect(preview.rawContent).not.toContain("sk-real-secret-abc");
     const draft = preview.rawContent.replace('model = "gpt-5"', 'model = "gpt-5.1"');
 
@@ -208,7 +229,10 @@ describe("N1: preview -> apply round trip preserves secrets", () => {
     const cfg = path.join(tmpDir, "validate.toml");
     await fs.writeFile(cfg, 'model = "gpt-5"\n', "utf8");
     const built = await buildApp({ dataDir: path.join(tmpDir, "n3"), adapters: [], schedulerAutoStart: false, configPaths: [cfg] });
-    const preview = (await (await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(cfg)}` })).json()).data;
+    const auth = await sessionHeader(built);
+    const preview = (await (await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(cfg)}`,
+      headers: auth
+    })).json()).data;
     const issue = await built.app.inject({ method: "POST", url: "/api/session" });
     const token = issue.json().data.token;
 
@@ -237,7 +261,9 @@ describe("N2: restore cannot write through symlinks or outside the whitelist", (
     const auth = { "x-lms-session": token };
 
     async function previewHash() {
-      const p = (await (await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(cfg)}` })).json()).data;
+      const p = (await (await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(cfg)}`,
+      headers: auth
+    })).json()).data;
       return p.previewHash;
     }
     // Create a backup whose content is the evil payload.
@@ -256,5 +282,31 @@ describe("N2: restore cannot write through symlinks or outside the whitelist", (
     // The victim is untouched.
     expect(await fs.readFile(victim, "utf8")).toBe('model = "original"\n');
     await built.close();
+  });
+});
+
+describe("N4/N5: expanded value-level redaction", () => {
+  it("redacts variant secret prefixes case-insensitively", () => {
+    const redacted = redactValue({
+      a: "SK-ABCDEFGH12345678",
+      b: "github_pat_11ABCDEFGHIJKLMNOPQRST",
+      c: "glpat-abcdefghijklmno123",
+      d: "hf_abcdefghijklmnopqrst",
+      e: "AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ12345"
+    });
+    expect(JSON.stringify(redacted)).not.toMatch(/SK-ABCDEFGH|github_pat_|glpat-|hf_[a-z]|AIzaSy/);
+    expect(JSON.stringify(redacted)).toContain("<redacted>");
+  });
+
+  it("redacts URL-embedded credentials", () => {
+    const redacted = redactValue({ url: "https://user:supersecretpass@example.com", redis: "redis://:supersecretpass@127.0.0.1:6379" });
+    expect(JSON.stringify(redacted)).not.toContain("supersecretpass");
+    expect(JSON.stringify(redacted)).toContain("<redacted>@");
+  });
+
+  it("redacts numeric values under sensitive keys but keeps metric counters", () => {
+    expect(redactValue({ token: 123456 })).toEqual({ token: "<redacted>" });
+    expect(redactValue({ token_value: 987654321 })).toEqual({ token_value: "<redacted>" });
+    expect(redactValue({ tokensIn: 12, latencyMs: 30 })).toEqual({ tokensIn: 12, latencyMs: 30 });
   });
 });

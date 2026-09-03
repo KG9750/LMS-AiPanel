@@ -885,6 +885,14 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
 
   /** Reads a structured preview of the supported config file. */
   app.get<{ Querystring: { path?: string } }>("/api/config/preview", async (request) => {
+    if (!requireWrite(request)) {
+      return envelope(
+        fail({
+          code: "WRITE_GUARD_REJECTED",
+          message: "Config preview requires a valid local session"
+        })
+      );
+    }
     const filePath = request.query.path ?? configPaths[0];
     if (!filePath) {
       return envelope(fail({ code: "CONFIG_PATH_REQUIRED", message: "config path is required" }));
@@ -912,6 +920,14 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
 
   /** Raw diff between the current file and the proposed edit. */
   app.post<{ Body: { path?: string; content?: string } }>("/api/config/diff", async (request) => {
+    if (!requireWrite(request)) {
+      return envelope(
+        fail({
+          code: "WRITE_GUARD_REJECTED",
+          message: "Config diff requires a valid local session"
+        })
+      );
+    }
     const filePath = request.body.path ?? "";
     const content = request.body.content ?? "";
     if (!(await isAllowedConfigPath(filePath))) {

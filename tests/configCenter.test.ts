@@ -30,10 +30,18 @@ afterEach(async () => {
   await fs.rm(tmpDir, { recursive: true, force: true });
 });
 
+async function sessionHeader(built: { app: import("fastify").FastifyInstance }): Promise<Record<string, string>> {
+  const issue = await built.app.inject({ method: "POST", url: "/api/session" });
+  return { "x-lms-session": issue.json().data.token as string };
+}
+
 describe("Config Center", () => {
   it("exposes meaning, type, source, sensitivity, version, and restart requirements per field", async () => {
     const built = await buildApp({ dataDir: path.join(tmpDir, "data"), adapters: [], schedulerAutoStart: false, configPaths: [configFile] });
-    const res = await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(configFile)}` });
+    const auth = await sessionHeader(built);
+    const res = await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(configFile)}`,
+      headers: auth
+    });
     const preview = res.json().data;
 
     expect(preview.configType).toBe("codex-config-toml");
@@ -54,7 +62,10 @@ describe("Config Center", () => {
 
   it("unknown fields survive a round trip and are labeled undocumented", async () => {
     const built = await buildApp({ dataDir: path.join(tmpDir, "data2"), adapters: [], schedulerAutoStart: false, configPaths: [configFile] });
-    const res = await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(configFile)}` });
+    const auth = await sessionHeader(built);
+    const res = await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(configFile)}`,
+      headers: auth
+    });
     const preview = res.json().data;
 
     expect(preview.undocumentedFields).toContainEqual({ key: "custom_unknown_key", value: "keep-me" });
@@ -77,7 +88,10 @@ describe("Config Center", () => {
 
   it("an external file change invalidates the preview before apply", async () => {
     const built = await buildApp({ dataDir: path.join(tmpDir, "data3"), adapters: [], schedulerAutoStart: false, configPaths: [configFile] });
-    const res = await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(configFile)}` });
+    const auth = await sessionHeader(built);
+    const res = await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(configFile)}`,
+      headers: auth
+    });
     const preview = res.json().data;
 
     // External change after preview.
@@ -102,7 +116,10 @@ describe("Config Center", () => {
 
   it("apply creates ActionRun and audit evidence with backup", async () => {
     const built = await buildApp({ dataDir: path.join(tmpDir, "data4"), adapters: [], schedulerAutoStart: false, configPaths: [configFile] });
-    const res = await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(configFile)}` });
+    const auth = await sessionHeader(built);
+    const res = await built.app.inject({ method: "GET", url: `/api/config/preview?path=${encodeURIComponent(configFile)}`,
+      headers: auth
+    });
     const preview = res.json().data;
     const issue = await built.app.inject({ method: "POST", url: "/api/session" });
     const token = issue.json().data.token;
@@ -140,9 +157,11 @@ describe("Config Center", () => {
 
   it("diff preview shows added/removed lines", async () => {
     const built = await buildApp({ dataDir: path.join(tmpDir, "data5"), adapters: [], schedulerAutoStart: false, configPaths: [configFile] });
+    const auth = await sessionHeader(built);
     const res = await built.app.inject({
       method: "POST",
       url: "/api/config/diff",
+      headers: auth,
       payload: { path: configFile, content: UPDATED }
     });
     const data = res.json().data;

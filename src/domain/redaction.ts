@@ -15,7 +15,11 @@ const SENSITIVE_TERMS = new Set([
 
 /** Value-level secret patterns: redacted wherever they appear in a string. */
 const SECRET_VALUE_PATTERN =
-  /(sk-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9]{20,}|xox[bap]-[A-Za-z0-9-]{10,}|Bearer\s+[A-Za-z0-9._~+/=-]{10,}|AKIA[0-9A-Z]{16})/g;
+  /(sk-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[bap]-[A-Za-z0-9-]{10,}|Bearer\s+[A-Za-z0-9._~+/=-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|glpat-[A-Za-z0-9_-]{15,}|hf_[A-Za-z0-9]{20,})/gi;
+
+/** URL-embedded credentials: scheme://user:password@host and redis://:pass@ */
+const URL_CREDENTIAL_PATTERN =
+  /([a-z][a-z0-9+.-]*:\/\/)([^/@\s:]*):([^@\s/]+)@/gi;
 
 /**
  * Splits a key into tokens: camelCase ("tokensIn" -> ["tokens","in"]),
@@ -37,7 +41,35 @@ export function isSensitiveKey(key: string): boolean {
 }
 
 export function redactSecretString(value: string): string {
-  return value.replace(SECRET_VALUE_PATTERN, "<redacted>");
+  return value
+    .replace(SECRET_VALUE_PATTERN, "<redacted>")
+    .replace(URL_CREDENTIAL_PATTERN, "$1<redacted>@");
+}
+
+/** Numeric metrics counters that must survive redaction (gateway report). */
+const NUMERIC_METRIC_KEYS = new Set([
+  "tokensin",
+  "tokensout",
+  "latencyms",
+  "count",
+  "requests",
+  "errors",
+  "modelcount",
+  "processmemorykb",
+  "memorykb",
+  "sizebytes",
+  "rsskb",
+  "durationms"
+]);
+
+/**
+ * Whether a sensitive-key numeric value is a metric counter (preserved) or a
+ * sensitive value (redacted). Numeric secrets under token/password/secret
+ * keys are redacted (N5); counter metrics stay visible.
+ */
+function isMetricCounter(key: string): boolean {
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return NUMERIC_METRIC_KEYS.has(normalized);
 }
 
 /**
@@ -61,7 +93,12 @@ export function redactValue(value: unknown): unknown {
     const result: Record<string, unknown> = {};
     for (const [key, nested] of Object.entries(value)) {
       if (isSensitiveKey(key)) {
-        result[key] = typeof nested === "number" || typeof nested === "boolean" ? nested : "<redacted>";
+        result[key] =
+          typeof nested === "number" && isMetricCounter(key)
+            ? nested
+            : typeof nested === "boolean" && isMetricCounter(key)
+              ? nested
+              : "<redacted>";
       } else {
         result[key] = redactValue(nested);
       }
