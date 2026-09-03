@@ -209,3 +209,27 @@
 | P2 | N7 TOCTOU、N8 测试 rejection、N9 错误回显、N10 死代码/audit 持久化/omlx hints | 逐一清理 |
 
 > 说明：本报告所有「已修复/未修复」判定均基于本轮独立实测；凡未在 macOS 真机验证的项均标注「未验证」。
+---
+
+# 第二轮修复状态（2026-09-03）
+
+上表全部发现已修复并提交（`5f86924` → `e5625b4`，共 4 个提交），黑盒复测全部通过。
+
+| 发现 | 修复 | 验证 |
+|---|---|---|
+| N1 往返破坏密钥 | apply 前把脱敏行回填为服务端持有的原值 | ✅ 往返后密钥/URL 凭据/数字原样保留，编辑生效，无 `<redacted>` 残留 |
+| N2 restore 任意写 | restore 走白名单 realpath 检查 + O_NOFOLLOW 拒绝 symlink | ✅ symlink 换绑后 restore 被拒（CONFIG_RESTORE_DENIED），victim 未动 |
+| N3 先写后验 | apply 写前 TOML 解析校验，无效编辑不落盘 | ✅ 无效 TOML 被拒且文件未动 |
+| N4 值级模式窄 | 覆盖大小写变体（SK-/ghp_/gho_/github_pat_/xox/Bearer/AKIA/AIza/glpat-/hf_）+ URL 内嵌凭据（含 redis://:pass@） | ✅ 全部脱敏 |
+| N5 数字密钥泄露 | 敏感键下数字仅度量计数键保留，其余脱敏 | ✅ `password = 123456` 脱敏，`tokensIn` 保留 |
+| N6 读面无守卫 | preview/diff 加会话守卫（CLI 无 Origin 路径保留） | ✅ 无会话被拒 |
+| P2 | scheduler 停止后拒绝采集（消除 3 个 unhandled rejection）；死代码清理；配置面板接入真实 diff；MCP 握手按钮 | ✅ 测试无 Unhandled Errors |
+
+## 终态验证
+
+- `npm test`: 25 文件 / 144 测试全过，无 unhandled rejection
+- `npm run build`: 干净
+- 黑盒复测：N1–N6 全部 9 项断言通过
+- 遗留：macOS 真机验证与真实浏览器 QA（环境限制，代码与隔离测试就绪）
+
+**结论：第二轮发现的全部问题已闭环，可进入真机验收阶段。**
