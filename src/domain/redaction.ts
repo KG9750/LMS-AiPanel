@@ -113,13 +113,6 @@ export function redactValue(value: unknown): unknown {
   return value;
 }
 
-export function redactStringForDisplay(value: string): string {
-  if (!isSensitiveKey(value)) {
-    return redactSecretString(value);
-  }
-  return "<redacted>";
-}
-
 /**
  * Line-level redaction for raw config previews: `key = value` lines whose key
  * is sensitive get their value replaced, then value-level patterns are

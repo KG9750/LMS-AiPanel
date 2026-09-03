@@ -63,11 +63,11 @@ export class Scheduler {
 
   start(): void {
     if (!this.options.autoStart || this.stopped) return;
-    this.fastTimer = setInterval(() => void this.collect("fast"), this.options.fastIntervalMs);
-    this.slowTimer = setInterval(() => void this.collect("slow"), this.options.slowIntervalMs);
+    this.fastTimer = setInterval(() => void this.collect("fast").catch(() => undefined), this.options.fastIntervalMs);
+    this.slowTimer = setInterval(() => void this.collect("slow").catch(() => undefined), this.options.slowIntervalMs);
     // Kick off an initial background collection so the first snapshot is
     // ready shortly after startup WITHOUT blocking query requests (M5).
-    void this.collect("all");
+    void this.collect("all").catch(() => undefined);
   }
 
   stop(): void {
@@ -84,6 +84,11 @@ export class Scheduler {
 
   /** Single-flight entry point: concurrent callers share the same collection. */
   collect(mode: "fast" | "slow" | "all" = "all"): Promise<SchedulerSnapshot> {
+    if (this.stopped) {
+      // A stopped scheduler must not touch storage (avoids unhandled
+      // rejections when tests close the DB before a background tick lands).
+      return Promise.reject(new Error("scheduler is stopped"));
+    }
     if (this.inFlight) return this.inFlight;
     const run = this.doCollect(mode).finally(() => {
       this.inFlight = null;

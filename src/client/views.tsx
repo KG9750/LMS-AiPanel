@@ -20,6 +20,24 @@ export function ConfigCenterPanel({ onMessage }: { onMessage: (kind: "ok" | "err
   const [preview, setPreview] = useState<ConfigPreviewData | null>(null);
   const [editing, setEditing] = useState("");
   const [applying, setApplying] = useState(false);
+  const [diffLines, setDiffLines] = useState<Array<{ type: string; line: string }> | null>(null);
+
+  const showDiff = async () => {
+    if (!preview) return;
+    try {
+      const result = await apiFetch<{ diff: Array<{ type: string; line: string }>; fresh: boolean }>("/api/config/diff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: preview.filePath, content: editing })
+      });
+      setDiffLines(result.diff);
+      if (!result.fresh) {
+        onMessage("error", "文件已被外部修改，预览已失效，请重新读取");
+      }
+    } catch (error) {
+      onMessage("error", `diff 失败：${(error as Error).message}`);
+    }
+  };
 
   const loadPreview = async () => {
     try {
@@ -98,11 +116,22 @@ export function ConfigCenterPanel({ onMessage }: { onMessage: (kind: "ok" | "err
         spellCheck={false}
       />
       <div className="config-actions">
+        <button onClick={() => void showDiff()}>预览 diff</button>
         <button disabled={applying} onClick={() => void apply()}>
           {applying ? "正在应用..." : "备份并应用"}
         </button>
         <span className="config-hint">应用走 ActionRun：备份 → 原子替换 → 重新读取 → 验证</span>
       </div>
+      {diffLines && (
+        <div className="config-diff">
+          {diffLines.slice(0, 80).map((line, index) => (
+            <div key={index} className={`diff-line ${line.type}`}>
+              {line.type === "added" ? "+ " : line.type === "removed" ? "- " : "  "}
+              {line.line}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

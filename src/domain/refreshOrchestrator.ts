@@ -27,8 +27,7 @@ export class RefreshOrchestrator {
     private readonly store: RefreshRunStore,
     private readonly scheduler: Scheduler,
     private readonly hub: SseHub,
-    private readonly hostId: string,
-    private readonly defaultTimeoutMs = 10_000
+    private readonly hostId: string
   ) {}
 
   /** Stops accepting work; in-flight runs stop touching the store. */

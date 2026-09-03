@@ -57,6 +57,28 @@ const RELATION_LABEL: Record<string, string> = {
 export function ResourceDetail({ resourceId, onClose }: { resourceId: string; onClose: () => void }) {
   const [runningAction, setRunningAction] = React.useState<string | null>(null);
   const [actionStatus, setActionStatus] = React.useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const [mcpChecking, setMcpChecking] = React.useState(false);
+  const [mcpResult, setMcpResult] = React.useState<string | null>(null);
+  const [mcpError, setMcpError] = React.useState<string | null>(null);
+
+  // M3: explicit manual MCP capability handshake (managed servers only).
+  const checkMcp = async () => {
+    setMcpChecking(true);
+    setMcpError(null);
+    setMcpResult(null);
+    try {
+      const result = await apiFetch<{ serverInfo?: Record<string, unknown>; tools?: string[] }>(
+        `/api/mcp/${encodeURIComponent(resourceId)}/verify`,
+        { method: "POST" }
+      );
+      setMcpResult(`serverInfo=${JSON.stringify(result.serverInfo ?? {})} tools=${(result.tools ?? []).join(",") || "无"}`);
+    } catch (err) {
+      const e = err as Error & { code?: string };
+      setMcpError(`${e.code ?? "握手失败"}：${e.message}`);
+    } finally {
+      setMcpChecking(false);
+    }
+  };
 
   // M7: full Action Gateway flow — plan -> create run -> confirm -> execute.
   const runAction = async (action: string) => {
@@ -209,6 +231,21 @@ export function ResourceDetail({ resourceId, onClose }: { resourceId: string; on
                 </div>
               ))}
             </section>
+
+            {data.resource.type === "mcp" && data.managed && (
+              <section>
+                <h3>MCP 能力检查（手动握手，仅能力元数据）</h3>
+                <button
+                  className="action-chip"
+                  disabled={mcpChecking}
+                  onClick={() => void checkMcp()}
+                >
+                  {mcpChecking ? "握手检查中..." : "执行能力握手"}
+                </button>
+                {mcpResult && <p className="action-status ok">{mcpResult}</p>}
+                {mcpError && <p className="action-status error">{mcpError}</p>}
+              </section>
+            )}
 
             <section>
               <h3>可用动作（执行必须通过 Action Gateway）</h3>
