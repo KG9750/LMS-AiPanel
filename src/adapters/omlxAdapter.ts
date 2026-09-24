@@ -274,6 +274,9 @@ export class OmlxAdapter implements StackAdapter {
   }
 
   private async findProcess(): Promise<ProcessRow | null> {
+    if (process.env.OMLX_MOCK_NO_PROCESS === "1") {
+      return null;
+    }
     try {
       const { stdout } = await execa("ps", ["-axo", "pid=,rss=,command="], { timeout: 3_000 });
       const line = stdout

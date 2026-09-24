@@ -73,7 +73,7 @@ describe("adapter capability manifests", () => {
       manifestVersion: 99
     };
 
-    const good = createAdapters()[0];
+    const good = createAdapters().find((a) => a.id === "claude-config") ?? createAdapters()[1];
     const built = await buildApp({
       dataDir: path.join(tmpDir, "isolate"),
       adapters: [good, broken],

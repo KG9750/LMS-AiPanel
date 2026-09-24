@@ -205,7 +205,9 @@ export class AssistantAdapter implements StackAdapter {
 
   private async findContainers(context: AdapterContext): Promise<Array<{ name: string; state: string; running: boolean; image?: string }>> {
     try {
-      const { stdout } = await execa("docker", ["ps", "--all", "--format", "{{json .}}"], { timeout: context.timeoutMs });
+      const { stdout } = await execa("docker", ["ps", "--all", "--format", "{{json .}}"], {
+        timeout: Math.min(context.timeoutMs, 2_000)
+      });
       return stdout
         .split("\n")
         .map((line) => line.trim())

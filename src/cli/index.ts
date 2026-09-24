@@ -28,14 +28,23 @@ const HOST = process.env.LMS_AIPANEL_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.LMS_AIPANEL_PORT ?? 3777);
 const HEALTH_URL = `http://${HOST}:${PORT}/api/health`;
 
+function homeDir(): string {
+  return process.env.HOME || os.homedir();
+}
+
 function dataRoot(): string {
   const override = process.env.LMS_AIPANEL_DATA_DIR;
   if (override && override.trim()) return override;
-  return path.join(os.homedir(), "Library", "Application Support", "LMS-AiPanel");
+  return path.join(homeDir(), "Library", "Application Support", "LMS-AiPanel");
 }
 
 function launchAgentPlistPath(): string {
-  return path.join(os.homedir(), "Library", "LaunchAgents", "com.lms-aipanel.service.plist");
+  return path.join(homeDir(), "Library", "LaunchAgents", "com.lms-aipanel.service.plist");
+}
+
+function guiDomain(): string {
+  const uid = typeof process.getuid === "function" ? process.getuid() : 501;
+  return `gui/${uid}`;
 }
 
 function buildPlist(): string {
@@ -101,13 +110,17 @@ async function status(verbose = false): Promise<{ running: boolean; pid?: number
     const plist = launchAgentPlistPath();
     const exists = await fs.access(plist).then(() => true).catch(() => false);
     if (exists) {
-      const out = run("launchctl", ["print", "gui/501/com.lms-aipanel.service"]);
-      running = out.status === 0;
-      const pidMatch = out.stdout.match(/pid\s*=\s*(\d+)/);
-      if (pidMatch) pid = Number(pidMatch[1]);
+      const out = run("launchctl", ["print", `${guiDomain()}/com.lms-aipanel.service`]);
+      if (out.status === 0) {
+        running = true;
+        const pidMatch = out.stdout.match(/pid\s*=\s*(\d+)/);
+        if (pidMatch) pid = Number(pidMatch[1]);
+      }
     }
-  } else {
-    // Non-macOS: check the pid file first, then a listening socket.
+  }
+
+  if (!running) {
+    // Check the pid file first, then fallback to pgrep or listening socket.
     try {
       const pidFile = path.join(dataRoot(), "logs", "service.pid");
       const saved = Number((await fs.readFile(pidFile, "utf8")).trim());
@@ -121,10 +134,24 @@ async function status(verbose = false): Promise<{ running: boolean; pid?: number
     } catch {
       // no pid file yet
     }
-    if (!running) {
-      const out = run("sh", ["-c", `ss -tlnp 2>/dev/null | grep -q ':${PORT} ' && echo listening || true`]);
-      running = out.stdout.trim() === "listening";
+  }
+
+  if (!running) {
+    const serverEntry = path.join(ROOT, "dist", "server", "index.js");
+    const matches = run("pgrep", ["-f", serverEntry]);
+    for (const line of matches.stdout.trim().split("\n")) {
+      const p = Number(line.trim());
+      if (p > 0 && p !== process.pid) {
+        pid = p;
+        running = true;
+        break;
+      }
     }
+  }
+
+  if (!running) {
+    const out = run("sh", ["-c", `ss -tlnp 2>/dev/null | grep -q ':${PORT} ' && echo listening || true`]);
+    running = out.stdout.trim() === "listening";
   }
 
   const health = await fetchHealth();
@@ -147,7 +174,7 @@ async function cmdInstall(): Promise<void> {
   const out = run("launchctl", ["load", plistPath]);
   if (out.status !== 0) {
     // Modern macOS prefers bootstrap; fall back with a warning.
-    const boot = run("launchctl", ["bootstrap", "gui/501", plistPath]);
+    const boot = run("launchctl", ["bootstrap", guiDomain(), plistPath]);
     if (boot.status !== 0) {
       console.error(`install: launchctl failed: ${out.stderr}${boot.stderr}`);
       process.exitCode = 1;
@@ -159,19 +186,20 @@ async function cmdInstall(): Promise<void> {
 }
 
 async function cmdStart(): Promise<void> {
+  let startedViaLaunchctl = false;
   if (isMac()) {
     const plistPath = launchAgentPlistPath();
     const exists = await fs.access(plistPath).then(() => true).catch(() => false);
-    if (!exists) {
-      console.error("start: service not installed; run 'lms-aipanel install' first");
-      process.exitCode = 1;
-      return;
+    if (exists) {
+      const kick = run("launchctl", ["kickstart", "-k", `${guiDomain()}/com.lms-aipanel.service`]);
+      if (kick.status === 0) {
+        startedViaLaunchctl = true;
+      }
     }
-    run("launchctl", ["kickstart", "gui/501/com.lms-aipanel.service"]);
-  } else {
-    // Non-macOS: spawn the server DIRECTLY with detached:true (new process
-    // group/session). The spawned pid IS the server pid — no wrapper (e.g.
-    // setsid forks, making the pid file point at a dead wrapper).
+  }
+
+  if (!startedViaLaunchctl) {
+    // Spawn the server directly with detached:true (new process group/session).
     const logDir = await ensureLogDir();
     const serverEntry = path.join(ROOT, "dist", "server", "index.js");
     const env = {
@@ -211,39 +239,42 @@ async function cmdStart(): Promise<void> {
 
 async function cmdStop(): Promise<void> {
   if (isMac()) {
-    const out = run("launchctl", ["bootout", "gui/501/com.lms-aipanel.service"]);
-    if (out.status !== 0) {
-      run("launchctl", ["unload", launchAgentPlistPath()]);
+    const plist = launchAgentPlistPath();
+    const exists = await fs.access(plist).then(() => true).catch(() => false);
+    if (exists) {
+      const out = run("launchctl", ["bootout", `${guiDomain()}/com.lms-aipanel.service`]);
+      if (out.status !== 0) {
+        run("launchctl", ["unload", plist]);
+      }
     }
-  } else {
-    const pidFile = path.join(dataRoot(), "logs", "service.pid");
-    let killed = false;
-    try {
-      const pid = Number((await fs.readFile(pidFile, "utf8")).trim());
-      if (pid > 0) {
+  }
+
+  // Also stop any pid-file or pgrep-managed instance (works on macOS fallback and other OS)
+  const pidFile = path.join(dataRoot(), "logs", "service.pid");
+  let killed = false;
+  try {
+    const pid = Number((await fs.readFile(pidFile, "utf8")).trim());
+    if (pid > 0) {
+      try {
+        process.kill(pid, "SIGTERM");
+        killed = true;
+      } catch {
+        // process already gone
+      }
+    }
+  } catch {
+    // no pid file
+  }
+  if (!killed) {
+    const serverEntry = path.join(ROOT, "dist", "server", "index.js");
+    const matches = run("pgrep", ["-f", serverEntry]);
+    for (const line of matches.stdout.trim().split("\n")) {
+      const pid = Number(line.trim());
+      if (pid > 0 && pid !== process.pid) {
         try {
           process.kill(pid, "SIGTERM");
-          killed = true;
         } catch {
-          // process already gone
-        }
-      }
-    } catch {
-      // no pid file
-    }
-    if (!killed) {
-      // Fallback: terminate any process running the server entry, excluding
-      // the CLI's own process (pkill -f would match this CLI's command line).
-      const serverEntry = path.join(ROOT, "dist", "server", "index.js");
-      const matches = run("pgrep", ["-f", serverEntry]);
-      for (const line of matches.stdout.trim().split("\n")) {
-        const pid = Number(line.trim());
-        if (pid > 0 && pid !== process.pid) {
-          try {
-            process.kill(pid, "SIGTERM");
-          } catch {
-            // already gone
-          }
+          // already gone
         }
       }
     }

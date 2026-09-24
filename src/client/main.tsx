@@ -17,7 +17,7 @@ import type {
 import { HostBadge, type HostInfo } from "./hostBadge";
 import { ResourceDetail } from "./resourceDetail";
 import { buildOperations } from "./operations";
-import { apiFetch, ensureSession, readFetch } from "./api";
+import { API_BASE, apiFetch, ensureSession, readFetch } from "./api";
 import { AuditPanel, ConfigCenterPanel, GatewayPanel, ResourceListView } from "./views";
 import "./styles.css";
 
@@ -254,7 +254,7 @@ function App() {
   const { data, error, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["graph"],
     queryFn: async () => {
-      const response = await fetch("/api/graph");
+      const response = await fetch(`${API_BASE}/api/graph`);
       const envelope = (await response.json()) as ApiEnvelope<SystemSnapshot> & { meta?: { collecting?: boolean } };
       if (!envelope.ok) {
         throw new Error(envelope.error.message);
@@ -270,7 +270,7 @@ function App() {
     try {
       const run = await apiFetch<{ runId: string; status: string }>("/api/refresh", { method: "POST" });
       setRefreshProgress(`刷新已开始（${run.runId.slice(0, 18)}…）`);
-      const source = new EventSource("/api/refresh/events");
+      const source = new EventSource(`${API_BASE}/api/refresh/events`);
       source.addEventListener("adapter", (event) => {
         const data = JSON.parse((event as MessageEvent).data) as { adapterId: string; status: string };
         setRefreshProgress(`采集器 ${data.adapterId} → ${data.status}`);
@@ -311,7 +311,7 @@ function App() {
   const { data: hostInfo } = useQuery({
     queryKey: ["host"],
     queryFn: async (): Promise<HostInfo> => {
-      const response = await fetch("/api/host");
+      const response = await fetch(`${API_BASE}/api/host`);
       const envelope = (await response.json()) as ApiEnvelope<HostInfo>;
       if (!envelope.ok) {
         throw new Error(envelope.error.message);
@@ -715,7 +715,7 @@ function CapabilityChips({ adapterId }: { adapterId: string }) {
   const { data } = useQuery({
     queryKey: ["adapters"],
     queryFn: async (): Promise<AdapterManifestEntry[]> => {
-      const response = await fetch("/api/adapters");
+      const response = await fetch(`${API_BASE}/api/adapters`);
       const envelope = (await response.json()) as ApiEnvelope<{ registered: AdapterManifestEntry[] }>;
       if (!envelope.ok) {
         throw new Error(envelope.error.message);

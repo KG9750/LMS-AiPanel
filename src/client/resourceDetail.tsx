@@ -1,6 +1,6 @@
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { apiFetch } from "./api";
+import { API_BASE, apiFetch } from "./api";
 import type {
   ActionPlan,
   AdapterRunStatus,
@@ -120,7 +120,7 @@ export function ResourceDetail({ resourceId, onClose }: { resourceId: string; on
   const { data, error, isLoading } = useQuery({
     queryKey: ["resource", resourceId],
     queryFn: async (): Promise<ResourceDetail> => {
-      const response = await fetch(`/api/resources/${encodeURIComponent(resourceId)}`);
+      const response = await fetch(`${API_BASE}/api/resources/${encodeURIComponent(resourceId)}`);
       const envelope = (await response.json()) as ApiEnvelope<ResourceDetail>;
       if (!envelope.ok) {
         throw new Error(envelope.error.message);

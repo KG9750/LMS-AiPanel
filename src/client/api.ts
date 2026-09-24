@@ -5,6 +5,14 @@
  */
 import type { ApiEnvelope } from "../shared/schemas";
 
+/**
+ * API base URL. In production the panel is served by the DSH proxy at
+ * http://127.0.0.1:3080/panel/ (assets under /panel/, API under /panel/api/*,
+ * OpenAI-compat under /panel/v1/*), so the client uses same-origin paths
+ * prefixed with /panel. Call sites append their own /api (or /v1) prefix.
+ */
+export const API_BASE = "/panel";
+
 interface SessionInfo {
   token: string;
   expiresAt: string;
@@ -17,7 +25,7 @@ export async function ensureSession(): Promise<string> {
   if (session && new Date(session.expiresAt).getTime() > Date.now() + 5_000) {
     return session.token;
   }
-  const response = await fetch("/api/session", { method: "POST" });
+  const response = await fetch(`${API_BASE}/api/session`, { method: "POST" });
   const envelope = (await response.json()) as ApiEnvelope<SessionInfo>;
   if (!envelope.ok) {
     throw new Error(`session acquisition failed: ${envelope.error.message}`);
@@ -28,7 +36,7 @@ export async function ensureSession(): Promise<string> {
 
 export async function apiFetch<T>(url: string, init: RequestInit = {}): Promise<T> {
   const token = await ensureSession();
-  const response = await fetch(url, {
+  const response = await fetch(`${API_BASE}${url}`, {
     ...init,
     headers: {
       ...(init.headers ?? {}),
@@ -47,7 +55,7 @@ export async function apiFetch<T>(url: string, init: RequestInit = {}): Promise<
 
 /** Read-only fetch that never acquires a session. */
 export async function readFetch<T>(url: string): Promise<T> {
-  const response = await fetch(url);
+  const response = await fetch(`${API_BASE}${url}`);
   const envelope = (await response.json()) as ApiEnvelope<T>;
   if (!envelope.ok) {
     throw new Error(envelope.error.message);

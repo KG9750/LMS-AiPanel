@@ -20,6 +20,7 @@ beforeEach(async () => {
 afterEach(async () => {
   delete process.env.OMLX_MODEL_DIR;
   delete process.env.OMLX_ENDPOINT;
+  delete process.env.OMLX_MOCK_NO_PROCESS;
   await fs.rm(tmpDir, { recursive: true, force: true });
   vi.restoreAllMocks();
 });
@@ -86,8 +87,9 @@ describe("oMLX adapter", () => {
   });
 
   it("stopped runtime: no process and unreachable endpoint stay distinct and read-only", async () => {
-    // Point the endpoint at a port with nothing listening.
+    // Point the endpoint at a port with nothing listening and mock absence of process.
     process.env.OMLX_ENDPOINT = "http://127.0.0.1:1";
+    process.env.OMLX_MOCK_NO_PROCESS = "1";
     const adapter = new OmlxAdapter();
     const result = await adapter.collect(CTX);
 

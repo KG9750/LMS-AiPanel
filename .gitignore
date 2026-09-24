@@ -33,3 +33,6 @@ coverage/
 
 # Local QA artifacts
 .codex/
+.mimosa/
+.v2c/
+.video_agent/

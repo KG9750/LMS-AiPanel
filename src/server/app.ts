@@ -28,6 +28,7 @@ import { MetricStore, type MetricLayer } from "../storage/metrics";
 import { SessionStore, type LocalSession } from "../storage/sessions";
 import { ActionRunStore } from "../storage/actionRuns";
 import { GatewayStore } from "../storage/gateway";
+import { AuditStore } from "../storage/audit";
 import { ConfigCenter } from "../domain/configCenter";
 import { ObservabilityGateway } from "../domain/gateway";
 import { closeDatabase } from "../storage/db";
@@ -149,7 +150,12 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
     "http://127.0.0.1:5173",
     "http://localhost:5173",
     `http://127.0.0.1:${port}`,
-    `http://localhost:${port}`
+    `http://localhost:${port}`,
+    // DSH web GUI origin (panel embedded at 3079/panel) and its proxy port.
+    "http://127.0.0.1:3079",
+    "http://localhost:3079",
+    "http://127.0.0.1:3080",
+    "http://localhost:3080"
   ]);
 
   /** Origin Guard: rejects writes from disallowed origins (CSRF boundary). */
@@ -166,7 +172,12 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
     return sessions.verify(token);
   };
 
-  const auditLog: Array<Record<string, unknown>> = [];
+  const auditStore = new AuditStore(storage.db);
+  const auditLog: { push: (entry: Record<string, unknown>) => void } = {
+    push: (entry: Record<string, unknown>) => {
+      auditStore.record(entry as never);
+    }
+  };
   const appPaths = getAppPaths();
 
   /** Query path: returns the most recent COMPLETED snapshot without collecting. */
@@ -183,7 +194,17 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
   };
 
   await app.register(cors, {
-    origin: ["http://127.0.0.1:5173", "http://localhost:5173"]
+    origin: [
+      "http://127.0.0.1:5173",
+      "http://localhost:5173",
+      // The DSH web GUI origin: the panel is embedded at 3079/panel and
+      // calls the API cross-origin (CORS preflight allows x-lms-session).
+      `http://127.0.0.1:3079`,
+      `http://localhost:3079`,
+      // DSH proxy port: the GUI is usually reached through 0.0.0.0:3080.
+      `http://127.0.0.1:3080`,
+      `http://localhost:3080`
+    ]
   });
 
   app.get("/api/health", async () =>
@@ -1164,7 +1185,7 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
     return envelope(ok({ serverId, ...outcome.capabilities, evidence: outcome.evidence }));
   });
 
-  app.get("/api/audit", async () => envelope(ok(auditLog)));
+  app.get("/api/audit", async () => envelope(ok(auditStore.list(100))));
 
   const clientDist = path.join(process.cwd(), "dist", "client");
   await app.register(import("@fastify/static"), {

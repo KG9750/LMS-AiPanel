@@ -153,6 +153,12 @@ describe("Config Center", () => {
     const audit = await built.app.inject({ method: "GET", url: "/api/audit" });
     expect(audit.json().data.some((e: { action: string }) => e.action === "config:apply")).toBe(true);
     await built.close();
+
+    // Audit trail persists across restart.
+    const restarted = await buildApp({ dataDir: path.join(tmpDir, "data4"), adapters: [], schedulerAutoStart: false, configPaths: [configFile] });
+    const restartedAudit = await restarted.app.inject({ method: "GET", url: "/api/audit" });
+    expect(restartedAudit.json().data.some((e: { action: string }) => e.action === "config:apply")).toBe(true);
+    await restarted.close();
   });
 
   it("diff preview shows added/removed lines", async () => {
