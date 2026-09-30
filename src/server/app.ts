@@ -183,7 +183,15 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
   /** Query path: returns the most recent COMPLETED snapshot without collecting. */
   const latestSnapshot = (): SystemSnapshot | null => scheduler.getLatest()?.snapshot ?? null;
 
-  const app = Fastify({ logger: options.logger ?? false });
+  const app = Fastify({
+    logger: options.logger ?? false,
+    rewriteUrl: (req) => {
+      if (req.url && (req.url.startsWith("/panel/api") || req.url.startsWith("/panel/v1"))) {
+        return req.url.replace(/^\/panel/, "");
+      }
+      return req.url ?? "/";
+    }
+  });
 
   const envelope = <T>(payload: ApiEnvelope<T>): ApiEnvelope<T> => {
     const withHost: ApiEnvelope<T> = {
