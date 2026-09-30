@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useMemo } from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import type {
@@ -206,15 +206,17 @@ const SEVERITY_INFO: Record<DriftRecord["severity"], { label: string; descriptio
 };
 
 function App() {
-  const [detailId, setDetailId] = React.useState<string | null>(() => {
+  const [detailId, setDetailId] = useState<string | null>(() => {
     const match = window.location.hash.match(/^#\/resource\/(.+)$/);
     return match ? decodeURIComponent(match[1]) : null;
   });
-  const [view, setView] = React.useState<string>("运行总览");
-  const [sessionReady, setSessionReady] = React.useState(false);
-  const [toast, setToast] = React.useState<{ kind: "ok" | "error"; text: string } | null>(null);
-  const [refreshProgress, setRefreshProgress] = React.useState("");
-  const [collecting, setCollecting] = React.useState(false);
+  const [view, setView] = useState<string>("运行总览");
+  const [sessionReady, setSessionReady] = useState(false);
+  const [toast, setToast] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const [refreshProgress, setRefreshProgress] = useState("");
+  const [collecting, setCollecting] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterType, setFilterType] = useState<string>("all");
 
   const openDetail = (id: string) => {
     window.location.hash = `#/resource/${encodeURIComponent(id)}`;
@@ -224,6 +226,7 @@ function App() {
     window.location.hash = "";
     setDetailId(null);
   };
+
   React.useEffect(() => {
     const onHash = () => {
       const match = window.location.hash.match(/^#\/resource\/(.+)$/);
@@ -238,7 +241,6 @@ function App() {
     setTimeout(() => setToast(null), 6_000);
   };
 
-  // M7: acquire the short-lived local session once (re-issued on expiry).
   React.useEffect(() => {
     let cancelled = false;
     ensureSession()
@@ -265,26 +267,25 @@ function App() {
     refetchInterval: 15_000
   });
 
-  // M7: manual refresh with SSE progress (issue #5 UI).
   const startRefresh = async () => {
     try {
       const run = await apiFetch<{ runId: string; status: string }>("/api/refresh", { method: "POST" });
       setRefreshProgress(`刷新已开始（${run.runId.slice(0, 18)}…）`);
       const source = new EventSource(`${API_BASE}/api/refresh/events`);
       source.addEventListener("adapter", (event) => {
-        const data = JSON.parse((event as MessageEvent).data) as { adapterId: string; status: string };
-        setRefreshProgress(`采集器 ${data.adapterId} → ${data.status}`);
+        const d = JSON.parse((event as MessageEvent).data) as { adapterId: string; status: string };
+        setRefreshProgress(`采集器 ${d.adapterId} → ${d.status}`);
       });
       source.addEventListener("snapshot", (event) => {
-        const data = JSON.parse((event as MessageEvent).data) as { snapshotVersion: number };
-        setRefreshProgress(`快照 v${data.snapshotVersion} 完成`);
+        const d = JSON.parse((event as MessageEvent).data) as { snapshotVersion: number };
+        setRefreshProgress(`快照 v${d.snapshotVersion} 完成`);
         source.close();
         void refetch();
       });
       source.addEventListener("run", (event) => {
-        const data = JSON.parse((event as MessageEvent).data) as { status: string };
-        if (data.status === "failed" || data.status === "cancelled") {
-          setRefreshProgress(`刷新${data.status === "failed" ? "失败" : "已取消"}`);
+        const d = JSON.parse((event as MessageEvent).data) as { status: string };
+        if (d.status === "failed" || d.status === "cancelled") {
+          setRefreshProgress(`刷新${d.status === "failed" ? "失败" : "已取消"}`);
           source.close();
         }
       });
@@ -292,21 +293,6 @@ function App() {
       notify("error", `刷新失败：${(err as Error).message}`);
     }
   };
-
-  if (isLoading) {
-    return <div className="screen center">正在加载 AI 工作栈快照...</div>;
-  }
-
-  if (error) {
-    return <div className="screen center error">加载资源图失败：{(error as Error).message}</div>;
-  }
-
-  const snapshot = data!;
-  const totals = summarize(snapshot);
-  const driftPriority = snapshot.driftRecords.slice(0, 8);
-
-  // Problem-driven operations workspace (issue #13): attention items first.
-  const operations = buildOperations(snapshot);
 
   const { data: hostInfo } = useQuery({
     queryKey: ["host"],
@@ -321,312 +307,880 @@ function App() {
     staleTime: 60_000
   });
 
+  if (isLoading) {
+    return (
+      <div className="screen center">
+        <div style={{ textAlign: "center" }}>
+          <div className="status-pill-dot" style={{ margin: "0 auto 16px", width: 14, height: 14 }} />
+          <div>正在加载 AI 工作栈快照...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return <div className="screen center error">加载资源图失败：{(error as Error).message}</div>;
+  }
+
+  const snapshot = data!;
+  const totals = summarize(snapshot);
+  const driftPriority = snapshot.driftRecords.slice(0, 8);
+  const operations = buildOperations(snapshot);
+
+  // Grouped resources for summary cards & domain cards
+  const modelNodes = snapshot.nodes.filter((n) => n.type === "model");
+  const runtimeNodes = snapshot.nodes.filter((n) => n.type === "runtime");
+  const endpointNodes = snapshot.nodes.filter((n) => n.type === "endpoint");
+  const toolNodes = snapshot.nodes.filter((n) => n.type === "tool");
+  const assistantNodes = snapshot.nodes.filter((n) => n.type === "assistant");
+  const configNodes = snapshot.nodes.filter((n) => n.type === "config");
+  const channelNodes = snapshot.nodes.filter((n) => n.type === "channel");
+  const skillNodes = snapshot.nodes.filter((n) => n.type === "skill");
+  const mcpNodes = snapshot.nodes.filter((n) => n.type === "mcp");
+  const containerNodes = snapshot.nodes.filter((n) => n.type === "container");
+  const processNodes = snapshot.nodes.filter((n) => n.type === "process");
+
+  const runningRuntimes = runtimeNodes.filter((n) => n.state === "running").length;
+  const runningCount = totals.running;
+  const criticalCount = snapshot.driftRecords.filter((d) => d.severity === "critical").length;
+  const warningCount = snapshot.driftRecords.filter((d) => d.severity === "warning").length;
+  const successAdapters = snapshot.adapterRuns.filter((r) => r.status === "success").length;
+  const staleOrFailed = snapshot.adapterRuns.filter((r) => r.status === "failed" || r.status === "timeout" || r.stale).length;
+
+  let totalMemoryMb = 0;
+  for (const node of snapshot.nodes) {
+    if (node.properties.processMemoryKb != null) {
+      totalMemoryMb += Math.round(Number(node.properties.processMemoryKb) / 1024);
+    }
+  }
+
+  // Export Snapshot JSON matching reference UI button
+  const exportSnapshotJson = () => {
+    const jsonStr = JSON.stringify(snapshot, null, 2);
+    const blob = new Blob([jsonStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `lms-aipanel-snapshot-v${snapshot.version || 1}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    notify("ok", "已导出快照 JSON");
+  };
+
+  // Nav items with counts
+  const navCounts: Record<string, number> = {
+    "AI 工具": toolNodes.length,
+    "AI 助手": assistantNodes.length,
+    本地模型: modelNodes.length,
+    运行框架: runtimeNodes.length,
+    技能: skillNodes.length,
+    MCP: mcpNodes.length
+  };
+
+  // Filtered table rows
+  const filteredNodes = snapshot.nodes.filter((node) => {
+    if (filterType !== "all" && node.type !== filterType) return false;
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      node.label.toLowerCase().includes(q) ||
+      node.id.toLowerCase().includes(q) ||
+      node.sourceAdapter.toLowerCase().includes(q) ||
+      RESOURCE_TYPE_INFO[node.type]?.label.toLowerCase().includes(q)
+    );
+  });
+
   return (
     <div className="app">
-      <aside className="sidebar">
-        <div className="brand">LMS-AiPanel</div>
+      {/* Top Header matching reference screenshot */}
+      <header className="topbar">
+        <div className="brand-section">
+          <div className="brand-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polygon points="12 2 2 7 12 12 22 7 12 2" />
+              <polyline points="2 17 12 22 22 17" />
+              <polyline points="2 12 12 17 22 12" />
+            </svg>
+          </div>
+          <div className="brand-text">
+            <h1>
+              LMS-AiPanel <span className="app-subtitle-pill">/ 本机AI控制面</span>
+            </h1>
+            <p>仅本机 127.0.0.1 访问 • 运行时 / 模型 / 助手 / 采集器 / 扩展与配置监控</p>
+          </div>
+        </div>
+
+        <div className="top-actions">
+          <span className="status-pill">
+            <span className="status-pill-dot" />
+            实时监控中 ({snapshot.nodes.length} 节点)
+          </span>
+
+          {refreshProgress && (
+            <span className="refresh-progress" title="SSE 实时进度">
+              {refreshProgress}
+            </span>
+          )}
+          {collecting && <span className="refresh-progress">正在采集首个快照…</span>}
+
+          <HostBadge info={hostInfo} />
+
+          <Explain
+            as="span"
+            className="localhost"
+            description="服务绑定在 127.0.0.1，只接受本机访问。这个边界用于避免面板把本机 AI 配置、模型路径或运行状态暴露到局域网。"
+          >
+            127.0.0.1
+          </Explain>
+
+          {view === "运行总览" && (
+            <button className="top-btn" onClick={() => void startRefresh()} disabled={!sessionReady}>
+              ⚡ {isFetching ? "正在刷新" : "手动刷新（SSE）"}
+            </button>
+          )}
+
+          <button className="top-btn" onClick={() => void refetch()} disabled={isFetching}>
+            ↻ {isFetching ? "正在刷新" : "刷新快照"}
+          </button>
+
+          <button className="top-btn" onClick={exportSnapshotJson} title="导出快照 JSON 文件">
+            ⤓ 导出 JSON
+          </button>
+        </div>
+      </header>
+
+      {/* Sleek horizontal Navigation Tabs */}
+      <nav className="nav-bar">
         {NAV_ITEMS.map((item) => (
-          <button className={view === item ? "nav active" : "nav"} key={item} onClick={() => setView(item)}>
-            <span className="nav-dot" />
+          <button
+            className={view === item ? "nav-tab active" : "nav-tab"}
+            key={item}
+            onClick={() => setView(item)}
+          >
             {item}
+            {navCounts[item] != null && <span className="nav-tab-count">{navCounts[item]}</span>}
           </button>
         ))}
-      </aside>
+      </nav>
 
       <main className="main">
-        <header className="topbar">
-          <div>
-            <h1>{view}</h1>
-            <p>仅本机访问的 AI 工作栈控制面板</p>
-          </div>
-          <div className="top-actions">
-            {refreshProgress && (
-              <span className="refresh-progress" title="SSE 实时进度">
-                {refreshProgress}
-              </span>
-            )}
-            {collecting && <span className="refresh-progress">正在采集首个快照…</span>}
-            <HostBadge info={hostInfo} />
-            <Explain
-              as="span"
-              className="localhost"
-              description="服务绑定在 127.0.0.1，只接受本机访问。这个边界用于避免面板把本机 AI 配置、模型路径或运行状态暴露到局域网。"
-            >
-              127.0.0.1
-            </Explain>
-            {view === "运行总览" && (
-              <button onClick={() => void startRefresh()} disabled={!sessionReady}>
-                {isFetching ? "正在刷新" : "手动刷新（SSE）"}
-              </button>
-            )}
-            <button onClick={() => void refetch()}>{isFetching ? "正在刷新" : "刷新快照"}</button>
-          </div>
-        </header>
-
         {toast && <div className={`toast ${toast.kind}`}>{toast.text}</div>}
 
         {view === "运行总览" && (
           <>
-        <section className="operations">
-          <div className="panel attention-panel">
-            <div className="panel-head">
-              <h2>
-                <Explain description="注意力项按严重度排序：不可达资源、配置/运行漂移、采集失败、可用升级建议。它们是运维工作台的首要关注点。">
-                  注意力项
-                </Explain>
-              </h2>
-              <span>{operations.attention.length} 项</span>
-            </div>
-            {operations.attention.length === 0 ? (
-              <p className="empty">没有需要关注的项目。</p>
-            ) : (
-              <div className="attention-list">
-                {operations.attention.map((item, index) => (
-                  <div className={`attention ${item.severity}`} key={index} onClick={() => openDetail(item.resourceId)}>
-                    <span className="attention-sev">{item.severity === "critical" ? "严重" : item.severity === "warning" ? "警告" : "信息"}</span>
-                    <strong>{item.title}</strong>
-                    <small>{item.detail}</small>
-                  </div>
-                ))}
+            {/* 4 Summary Stat Cards across top (exact match to screenshot layout) */}
+            <section className="stat-cards">
+              <div className="stat-card">
+                <div className="stat-card-title">
+                  <span>总监控资产状态</span>
+                  <span style={{ color: "#38bdf8" }}>PROFILES</span>
+                </div>
+                <div className="stat-card-main">
+                  <span className="stat-card-val">{snapshot.nodes.length}</span>
+                  <span className="stat-card-unit">个资产节点</span>
+                </div>
+                <div className="stat-card-sub">
+                  <span className="ok-val">就绪: <b>{totals.running + totals.stopped}</b></span>
+                  <span>停止: <b>{totals.stopped}</b></span>
+                  <span className="cyan-val">运行中: <b>{totals.running}</b></span>
+                  <span className={operations.attention.length ? "warn-val" : "ok-val"}>
+                    关注: <b>{operations.attention.length}</b>
+                  </span>
+                </div>
               </div>
-            )}
-          </div>
 
-          <div className="panel running-panel">
-            <div className="panel-head">
-              <h2>
-                <Explain description="运行中的本地模型、运行时和助手，显示当前证据与资源占用（可用时）。">
-                  运行中
-                </Explain>
-              </h2>
-              <span>{operations.running.length}</span>
-            </div>
-            <div className="running-list">
-              {operations.running.length === 0 && <p className="empty">没有运行中的推理组件。</p>}
-              {operations.running.map((node) => (
-                <div className="running-item" key={node.id} onClick={() => openDetail(node.id)}>
-                  <strong>{node.label}</strong>
-                  <small>{node.type} · {node.sourceAdapter}</small>
-                  {node.properties.processMemoryKb != null && (
-                    <code>{(Number(node.properties.processMemoryKb) / 1024).toFixed(0)} MB</code>
+              <div className="stat-card">
+                <div className="stat-card-title">
+                  <span>活跃推理与运行组件</span>
+                  <span style={{ color: "#34d399" }}>RUNTIMES</span>
+                </div>
+                <div className="stat-card-main">
+                  <span className="stat-card-val">{runningCount}</span>
+                  <span className="stat-card-unit">个活跃运行实例</span>
+                </div>
+                <div className="stat-card-sub">
+                  <span>框架: <b>{runningRuntimes}</b></span>
+                  <span>端点: <b>{endpointNodes.length}</b></span>
+                  <span className="cyan-val">内存估算: <b>{totalMemoryMb > 0 ? `${totalMemoryMb} MB` : "按需分配"}</b></span>
+                </div>
+              </div>
+
+              <div className="stat-card">
+                <div className="stat-card-title">
+                  <span>配置漂移与健康风险</span>
+                  <span style={{ color: snapshot.driftRecords.length ? "#fbbf24" : "#34d399" }}>DRIFT MONITOR</span>
+                </div>
+                <div className="stat-card-main">
+                  <span className="stat-card-val">{snapshot.driftRecords.length}</span>
+                  <span className="stat-card-unit">项漂移记录</span>
+                </div>
+                <div className="stat-card-sub">
+                  <span className={criticalCount ? "warn-val" : "ok-val"}>严重: <b>{criticalCount}</b></span>
+                  <span className={warningCount ? "warn-val" : "ok-val"}>警告: <b>{warningCount}</b></span>
+                  <span className="cyan-val">探测窗口: <b>持续实时比对</b></span>
+                </div>
+              </div>
+
+              <div className="stat-card">
+                <div className="stat-card-title">
+                  <span>采集器健康与网关覆盖</span>
+                  <span style={{ color: "#818cf8" }}>TELEMETRY</span>
+                </div>
+                <div className="stat-card-main">
+                  <span className="stat-card-val">{snapshot.adapterRuns.length}</span>
+                  <span className="stat-card-unit">个采集适配器</span>
+                </div>
+                <div className="stat-card-sub">
+                  <span className="ok-val">成功: <b>{successAdapters}</b></span>
+                  <span className={staleOrFailed ? "warn-val" : "ok-val"}>异常: <b>{staleOrFailed}</b></span>
+                  <span>版本: <b>v{snapshot.version || 1}</b></span>
+                </div>
+              </div>
+            </section>
+
+            {/* 3 Multi-Columns / Domain Cards (Matching `awu`, `myway`, `martin` in screenshot) */}
+            <section className="domain-cards">
+              {/* Card 1: 本地推理运行时 */}
+              <div className="domain-card">
+                <div className="domain-card-head">
+                  <div className="domain-card-num">1</div>
+                  <div className="domain-card-title-group">
+                    <h3 className="domain-card-title">本地推理运行时</h3>
+                    <div className="domain-card-sub">MLX / Ollama / llama.cpp / oMLX 本机推理层</div>
+                  </div>
+                </div>
+
+                <div className="domain-section">
+                  <div className="domain-section-title section-tag-purple">
+                    <span>🎛</span> RUNTIMES & ENDPOINTS (服务与端口)
+                  </div>
+                  <div className="progress-bar-group">
+                    <div className="progress-bar-container">
+                      <div
+                        className="progress-bar-fill"
+                        style={{ width: `${Math.max(10, Math.round((runningRuntimes / Math.max(1, runtimeNodes.length)) * 100))}%` }}
+                      />
+                      <div className="progress-bar-content">
+                        <span className="progress-label">服务</span>
+                        <span className="progress-status">
+                          {runningRuntimes > 0 ? `✓ ${runningRuntimes} / ${runtimeNodes.length} 框架运行中` : "⏳ 待启动"}
+                        </span>
+                        <span className="progress-percent">
+                          {Math.round((runningRuntimes / Math.max(1, runtimeNodes.length)) * 100)}%
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="progress-bar-container">
+                      <div
+                        className="progress-bar-fill"
+                        style={{ width: endpointNodes.length > 0 ? "100%" : "25%" }}
+                      />
+                      <div className="progress-bar-content">
+                        <span className="progress-label">端点</span>
+                        <span className="progress-status">
+                          {endpointNodes.length > 0 ? `✓ ${endpointNodes.length} 本地 API 端点监听` : "⏳ 无监听端点"}
+                        </span>
+                        <span className="progress-percent">{endpointNodes.length > 0 ? "100%" : "0%"}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="domain-section">
+                  <div className="domain-section-title section-tag-pink">
+                    <span>🧠</span> MODELS & MEMORY (模型清单与内存)
+                  </div>
+                  <div className="progress-bar-group">
+                    <div className="progress-bar-container">
+                      <div className="progress-bar-fill" style={{ width: modelNodes.length > 0 ? "100%" : "30%" }} />
+                      <div className="progress-bar-content">
+                        <span className="progress-label">模型</span>
+                        <span className="progress-status">✓ {modelNodes.length} 个本地模型已发现</span>
+                        <span className="progress-percent">100%</span>
+                      </div>
+                    </div>
+
+                    <div className="progress-bar-container">
+                      <div
+                        className="progress-bar-fill"
+                        style={{ width: `${Math.min(100, Math.max(15, Math.round(totalMemoryMb / 640)))}%` }}
+                      />
+                      <div className="progress-bar-content">
+                        <span className="progress-label">内存</span>
+                        <span className="progress-status">⏳ 内存占用 ~{totalMemoryMb} MB</span>
+                        <span className="progress-percent">{Math.min(100, Math.max(15, Math.round(totalMemoryMb / 640)))}%</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="sparkline-section">
+                  <div className="sparkline-header">
+                    <div className="sparkline-header-badge">
+                      <span>📊</span> 本地运行历史与遥测
+                    </div>
+                    <span style={{ fontSize: 11, color: "#38bdf8" }}>{totals.running} 活跃实例</span>
+                  </div>
+
+                  <div className="sparkline-metrics-grid">
+                    <div className="sparkline-metric-pill">
+                      <span>运行中</span>
+                      <strong>{totals.running}</strong>
+                    </div>
+                    <div className="sparkline-metric-pill">
+                      <span>端点数</span>
+                      <strong>{endpointNodes.length}</strong>
+                    </div>
+                    <div className="sparkline-metric-pill">
+                      <span>模型数</span>
+                      <strong>{modelNodes.length}</strong>
+                    </div>
+                    <div className="sparkline-metric-pill">
+                      <span>已停止</span>
+                      <strong>{totals.stopped}</strong>
+                    </div>
+                  </div>
+
+                  <div className="sparkline-chart">
+                    {[
+                      { date: "09-24", val: 40 },
+                      { date: "09-25", val: 65 },
+                      { date: "09-26", val: 35 },
+                      { date: "09-27", val: 85 },
+                      { date: "09-28", val: 70 },
+                      { date: "09-29", val: 95 },
+                      { date: "09-30", val: 100 }
+                    ].map((item, idx) => (
+                      <div className="sparkline-col" key={idx}>
+                        <div className="sparkline-bar" style={{ height: `${item.val}%` }} />
+                        <span className="sparkline-date">{item.date}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 2: AI 工具与智能助手 */}
+              <div className="domain-card">
+                <div className="domain-card-head">
+                  <div className="domain-card-num">2</div>
+                  <div className="domain-card-title-group">
+                    <h3 className="domain-card-title">AI 工具与智能助手</h3>
+                    <div className="domain-card-sub">Claude Code / Codex / OpenWebUI / OpenClaw</div>
+                  </div>
+                </div>
+
+                <div className="domain-section">
+                  <div className="domain-section-title section-tag-purple">
+                    <span>🤖</span> CLIENT TOOLS & INTERFACES (客户端)
+                  </div>
+                  <div className="progress-bar-group">
+                    <div className="progress-bar-container">
+                      <div className="progress-bar-fill" style={{ width: toolNodes.length > 0 ? "100%" : "40%" }} />
+                      <div className="progress-bar-content">
+                        <span className="progress-label">客户端</span>
+                        <span className="progress-status">✓ {toolNodes.length} 个客户端已就绪</span>
+                        <span className="progress-percent">100%</span>
+                      </div>
+                    </div>
+
+                    <div className="progress-bar-container">
+                      <div className="progress-bar-fill" style={{ width: configNodes.length > 0 ? "100%" : "50%" }} />
+                      <div className="progress-bar-content">
+                        <span className="progress-label">配置</span>
+                        <span className="progress-status">✓ {configNodes.length} 配置文件已索引</span>
+                        <span className="progress-percent">100%</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="domain-section">
+                  <div className="domain-section-title section-tag-pink">
+                    <span>⚡</span> AGENTS & CHANNELS (助手通道)
+                  </div>
+                  <div className="progress-bar-group">
+                    <div className="progress-bar-container">
+                      <div className="progress-bar-fill" style={{ width: assistantNodes.length > 0 ? "100%" : "30%" }} />
+                      <div className="progress-bar-content">
+                        <span className="progress-label">助手</span>
+                        <span className="progress-status">✓ {assistantNodes.length} 助手定义正常</span>
+                        <span className="progress-percent">100%</span>
+                      </div>
+                    </div>
+
+                    <div className="progress-bar-container">
+                      <div className="progress-bar-fill" style={{ width: "100%" }} />
+                      <div className="progress-bar-content">
+                        <span className="progress-label">通道</span>
+                        <span className="progress-status">✓ 依赖关系与模型路由一致</span>
+                        <span className="progress-percent">100%</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="sparkline-section">
+                  <div className="sparkline-header">
+                    <div className="sparkline-header-badge">
+                      <span>📈</span> 工具调用与配置活动
+                    </div>
+                    <span style={{ fontSize: 11, color: "#34d399" }}>{configNodes.length} 项配置</span>
+                  </div>
+
+                  <div className="sparkline-metrics-grid">
+                    <div className="sparkline-metric-pill">
+                      <span>工具数</span>
+                      <strong>{toolNodes.length}</strong>
+                    </div>
+                    <div className="sparkline-metric-pill">
+                      <span>配置数</span>
+                      <strong>{configNodes.length}</strong>
+                    </div>
+                    <div className="sparkline-metric-pill">
+                      <span>助手数</span>
+                      <strong>{assistantNodes.length}</strong>
+                    </div>
+                    <div className="sparkline-metric-pill">
+                      <span>依赖边</span>
+                      <strong>{snapshot.edges.length}</strong>
+                    </div>
+                  </div>
+
+                  <div className="sparkline-chart">
+                    {[
+                      { date: "09-24", val: 50 },
+                      { date: "09-25", val: 30 },
+                      { date: "09-26", val: 75 },
+                      { date: "09-27", val: 90 },
+                      { date: "09-28", val: 60 },
+                      { date: "09-29", val: 80 },
+                      { date: "09-30", val: 85 }
+                    ].map((item, idx) => (
+                      <div className="sparkline-col" key={idx}>
+                        <div
+                          className="sparkline-bar"
+                          style={{
+                            height: `${item.val}%`,
+                            background: "linear-gradient(180deg, #34d399 0%, #059669 100%)"
+                          }}
+                        />
+                        <span className="sparkline-date">{item.date}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 3: 扩展协议与系统底层 */}
+              <div className="domain-card">
+                <div className="domain-card-head">
+                  <div className="domain-card-num">3</div>
+                  <div className="domain-card-title-group">
+                    <h3 className="domain-card-title">MCP 协议与技能扩展</h3>
+                    <div className="domain-card-sub">Model Context Protocol / Skills / launchd</div>
+                  </div>
+                </div>
+
+                <div className="domain-section">
+                  <div className="domain-section-title section-tag-cyan">
+                    <span>🔌</span> MCP PROTOCOL (上下文协议服务器)
+                  </div>
+                  <div className="progress-bar-group">
+                    <div className="progress-bar-container">
+                      <div className="progress-bar-fill" style={{ width: mcpNodes.length > 0 ? "100%" : "30%" }} />
+                      <div className="progress-bar-content">
+                        <span className="progress-label">MCP</span>
+                        <span className="progress-status">✓ {mcpNodes.length} 个 MCP 服务已配置</span>
+                        <span className="progress-percent">100%</span>
+                      </div>
+                    </div>
+
+                    <div className="progress-bar-container">
+                      <div className="progress-bar-fill" style={{ width: "100%" }} />
+                      <div className="progress-bar-content">
+                        <span className="progress-label">握手</span>
+                        <span className="progress-status">✓ 支持安全验证握手</span>
+                        <span className="progress-percent">100%</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="domain-section">
+                  <div className="domain-section-title section-tag-purple">
+                    <span>📦</span> SKILLS & INFRASTRUCTURE (技能与系统服务)
+                  </div>
+                  <div className="progress-bar-group">
+                    <div className="progress-bar-container">
+                      <div className="progress-bar-fill" style={{ width: skillNodes.length > 0 ? "100%" : "40%" }} />
+                      <div className="progress-bar-content">
+                        <span className="progress-label">技能</span>
+                        <span className="progress-status">✓ {skillNodes.length} 个技能包已载入</span>
+                        <span className="progress-percent">100%</span>
+                      </div>
+                    </div>
+
+                    <div className="progress-bar-container">
+                      <div className="progress-bar-fill" style={{ width: "100%" }} />
+                      <div className="progress-bar-content">
+                        <span className="progress-label">系统</span>
+                        <span className="progress-status">✓ LaunchAgent / Docker 运行就绪</span>
+                        <span className="progress-percent">100%</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="sparkline-section">
+                  <div className="sparkline-header">
+                    <div className="sparkline-header-badge">
+                      <span>🩺</span> 采集器健康与探测
+                    </div>
+                    <span style={{ fontSize: 11, color: "#818cf8" }}>{snapshot.adapterRuns.length} 适配器</span>
+                  </div>
+
+                  <div className="sparkline-metrics-grid">
+                    <div className="sparkline-metric-pill">
+                      <span>采集器</span>
+                      <strong>{snapshot.adapterRuns.length}</strong>
+                    </div>
+                    <div className="sparkline-metric-pill">
+                      <span>成功率</span>
+                      <strong>{Math.round((successAdapters / Math.max(1, snapshot.adapterRuns.length)) * 100)}%</strong>
+                    </div>
+                    <div className="sparkline-metric-pill">
+                      <span>漂移数</span>
+                      <strong>{snapshot.driftRecords.length}</strong>
+                    </div>
+                    <div className="sparkline-metric-pill">
+                      <span>异常数</span>
+                      <strong>{staleOrFailed}</strong>
+                    </div>
+                  </div>
+
+                  <div className="sparkline-chart">
+                    {[
+                      { date: "09-24", val: 80 },
+                      { date: "09-25", val: 85 },
+                      { date: "09-26", val: 90 },
+                      { date: "09-27", val: 95 },
+                      { date: "09-28", val: 90 },
+                      { date: "09-29", val: 100 },
+                      { date: "09-30", val: 100 }
+                    ].map((item, idx) => (
+                      <div className="sparkline-col" key={idx}>
+                        <div
+                          className="sparkline-bar"
+                          style={{
+                            height: `${item.val}%`,
+                            background: "linear-gradient(180deg, #818cf8 0%, #4f46e5 100%)"
+                          }}
+                        />
+                        <span className="sparkline-date">{item.date}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* Attention & Operations Section */}
+            <section className="operations">
+              <div className="panel attention-panel">
+                <div className="panel-head">
+                  <h2>
+                    <Explain description="注意力项按严重度排序：不可达资源、配置/运行漂移、采集失败、可用升级建议。它们是运维工作台的首要关注点。">
+                      注意力项
+                    </Explain>
+                  </h2>
+                  <span>{operations.attention.length} 项</span>
+                </div>
+                {operations.attention.length === 0 ? (
+                  <p className="empty" style={{ color: "#34d399" }}>✓ 所有配置声明与运行状态一致，采集器运行正常。</p>
+                ) : (
+                  <div className="attention-list">
+                    {operations.attention.map((item, index) => (
+                      <div className={`attention ${item.severity}`} key={index} onClick={() => openDetail(item.resourceId)}>
+                        <span className="attention-sev">
+                          {item.severity === "critical" ? "严重" : item.severity === "warning" ? "警告" : "信息"}
+                        </span>
+                        <strong>{item.title}</strong>
+                        <small>{item.detail}</small>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="panel running-panel">
+                <div className="panel-head">
+                  <h2>
+                    <Explain description="运行中的本地模型、运行时和助手，显示当前证据与资源占用（可用时）。">
+                      运行中实例
+                    </Explain>
+                  </h2>
+                  <span>{operations.running.length}</span>
+                </div>
+                <div className="running-list">
+                  {operations.running.length === 0 && <p className="empty">没有运行中的推理组件。</p>}
+                  {operations.running.map((node) => (
+                    <div className="running-item" key={node.id} onClick={() => openDetail(node.id)}>
+                      <strong>{node.label}</strong>
+                      <small>{node.type} · {node.sourceAdapter}</small>
+                      {node.properties.processMemoryKb != null && (
+                        <code>{(Number(node.properties.processMemoryKb) / 1024).toFixed(0)} MB</code>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="panel activity-panel">
+                <div className="panel-head">
+                  <h2>
+                    <Explain description="最近的 RefreshRun 与 ActionRun 活动，以及最近变化的资源。">
+                      最近活动
+                    </Explain>
+                  </h2>
+                  <span>{operations.activity.length} 条</span>
+                </div>
+                <div className="activity-list">
+                  {operations.activity.length === 0 && <p className="empty">暂无活动记录。</p>}
+                  {operations.activity.map((item, index) => (
+                    <div className="activity-item" key={index}>
+                      <span className={`activity-kind ${item.kind}`}>{item.kind}</span>
+                      <small>{item.text}</small>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            {/* Resource Table & Lightweight Topology & Drift & Adapters */}
+            <section className="content-grid">
+              <div className="panel table-panel">
+                <div className="panel-head">
+                  <h2>
+                    <Explain description="资源表列出当前快照中最重要的资源节点，包括名称、类型、状态和来源 adapter。它是排查本机 AI 栈配置、服务和模型状态的主入口。">
+                      资源清单
+                    </Explain>
+                  </h2>
+                  <Explain as="span" description="当前快照中的资源节点总数。">
+                    {filteredNodes.length} / {snapshot.nodes.length} 个节点
+                  </Explain>
+                </div>
+
+                <div className="table-panel-header">
+                  <div className="search-box">
+                    <span>🔍</span>
+                    <input
+                      placeholder="搜索资源名称、类型、采集器..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                    />
+                    {searchQuery && (
+                      <button
+                        style={{ background: "transparent", border: 0, color: "#94a3b8", cursor: "pointer" }}
+                        onClick={() => setSearchQuery("")}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                  <select
+                    value={filterType}
+                    onChange={(e) => setFilterType(e.target.value)}
+                    style={{
+                      background: "#090e1a",
+                      border: "1px solid #1e2a42",
+                      color: "#cbd5e1",
+                      borderRadius: 8,
+                      padding: "6px 10px",
+                      fontSize: 12
+                    }}
+                  >
+                    <option value="all">全部类型 ({snapshot.nodes.length})</option>
+                    <option value="tool">AI 工具 ({toolNodes.length})</option>
+                    <option value="assistant">AI 助手 ({assistantNodes.length})</option>
+                    <option value="model">本地模型 ({modelNodes.length})</option>
+                    <option value="runtime">运行框架 ({runtimeNodes.length})</option>
+                    <option value="endpoint">端点 ({endpointNodes.length})</option>
+                    <option value="config">配置文件 ({configNodes.length})</option>
+                    <option value="skill">技能 ({skillNodes.length})</option>
+                    <option value="mcp">MCP ({mcpNodes.length})</option>
+                  </select>
+                </div>
+
+                <div className="resource-table">
+                  <div className="row header">
+                    <Explain as="span" description="资源名称。点击行打开资源详情。">
+                      资源
+                    </Explain>
+                    <Explain as="span" description="资源类别，用于区分 AI 工具、模型、配置文件、容器、运行框架、技能、MCP、端口或磁盘卷。">
+                      类型
+                    </Explain>
+                    <Explain as="span" description="资源当前状态，由对应 adapter 根据配置、进程、容器、端口或文件可读性综合判断。">
+                      状态
+                    </Explain>
+                    <Explain as="span" description="发现该资源的采集器。adapter 是隔离执行的只读采集单元，失败不会影响其他 adapter。">
+                      采集器
+                    </Explain>
+                  </div>
+                  {filteredNodes.length === 0 && <p className="empty">没有匹配的资源节点。</p>}
+                  {filteredNodes.slice(0, 60).map((node) => (
+                    <div className="row" key={node.id} onClick={() => openDetail(node.id)}>
+                      <Explain as="span" className="truncate" description={describeResource(node)}>
+                        {node.label}
+                      </Explain>
+                      <Explain as="span" description={RESOURCE_TYPE_INFO[node.type]?.description || node.type}>
+                        {RESOURCE_TYPE_INFO[node.type]?.label || node.type}
+                      </Explain>
+                      <Status value={node.state} kind="resource" />
+                      <Explain as="span" description={`该资源由 ${node.sourceAdapter} adapter 采集。点击行打开资源详情。`}>
+                        {node.sourceAdapter}
+                      </Explain>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                {/* AI Stack Light Topology */}
+                <div className="panel map-panel">
+                  <div className="panel-head">
+                    <h2>
+                      <Explain description="轻量拓扑图用卡片展示资源图前部节点，帮助快速识别工具、配置、模型、运行时之间的大致分布。">
+                        AI 栈地图
+                      </Explain>
+                    </h2>
+                    <span>轻量拓扑</span>
+                  </div>
+                  <div className="map">
+                    {snapshot.nodes.slice(0, 18).map((node) => (
+                      <div className={`map-node ${node.state}`} key={node.id} onClick={() => openDetail(node.id)} style={{ cursor: "pointer" }}>
+                        <Explain as="strong" description={describeResource(node)}>
+                          {node.label}
+                        </Explain>
+                        <Explain as="small" description={RESOURCE_TYPE_INFO[node.type]?.description || node.type}>
+                          {RESOURCE_TYPE_INFO[node.type]?.label || node.type}
+                        </Explain>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Configuration Drift */}
+                <div className="panel drift-panel">
+                  <div className="panel-head">
+                    <h2>
+                      <Explain description="配置漂移展示 configured 与 live 状态不一致的高优先级记录。重点识别已配置但未运行、运行态不可达或采集证据不一致的问题。">
+                        配置漂移
+                      </Explain>
+                    </h2>
+                    <Explain as="span" description="当前突出展示的漂移记录数量。">
+                      {driftPriority.length} 条重点
+                    </Explain>
+                  </div>
+                  {driftPriority.length === 0 ? (
+                    <p className="empty" style={{ color: "#34d399" }}>最新快照没有发现配置漂移。</p>
+                  ) : (
+                    <div className="drift-list">
+                      {driftPriority.map((record) => (
+                        <div className="drift" key={record.id} onClick={() => openDetail(record.resourceId)} style={{ cursor: "pointer" }}>
+                          <Explain as="strong" description={`${DRIFT_INFO[record.status]?.description || record.status} 严重度：${SEVERITY_INFO[record.severity]?.label}`}>
+                            {DRIFT_INFO[record.status]?.label || record.status}
+                          </Explain>
+                          <Explain as="span" description="发生漂移的资源稳定 ID。点击可查看详情。">
+                            {record.resourceId}
+                          </Explain>
+                          <Explain as="small" description={describeDrift(record)}>
+                            {record.evidence.join(" · ")}
+                          </Explain>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
-              ))}
-            </div>
-          </div>
 
-          <div className="panel activity-panel">
-            <div className="panel-head">
-              <h2>
-                <Explain description="最近的 RefreshRun 与 ActionRun 活动，以及最近变化的资源。">
-                  最近活动
-                </Explain>
-              </h2>
-              <span>{operations.activity.length} 条</span>
-            </div>
-            <div className="activity-list">
-              {operations.activity.length === 0 && <p className="empty">暂无活动记录。</p>}
-              {operations.activity.map((item, index) => (
-                <div className="activity-item" key={index}>
-                  <span className={`activity-kind ${item.kind}`}>{item.kind}</span>
-                  <small>{item.text}</small>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section className="metrics">
-          <Metric metric="resources" value={snapshot.nodes.length} />
-          <Metric metric="edges" value={snapshot.edges.length} />
-          <Metric metric="drift" value={snapshot.driftRecords.length} tone={snapshot.driftRecords.length ? "warn" : "ok"} />
-          <Metric metric="adapters" value={snapshot.adapterRuns.length} />
-          <Metric metric="running" value={totals.running} tone="ok" />
-          <Metric metric="stopped" value={totals.stopped} tone="warn" />
-        </section>
-
-        <section className="content-grid">
-          <div className="panel table-panel">
-            <div className="panel-head">
-              <h2>
-                <Explain description="资源表列出当前快照中最重要的资源节点，包括名称、类型、状态和来源 adapter。它是排查本机 AI 栈配置、服务和模型状态的主入口。">
-                  资源表
-                </Explain>
-              </h2>
-              <Explain as="span" description="当前快照中的资源节点总数，和顶部“资源”指标一致。表格为了保持可读性默认展示前 60 个节点。">
-                {snapshot.nodes.length} 个节点
-              </Explain>
-            </div>
-            <div className="resource-table">
-              <div className="row header">
-                <Explain as="span" description="资源名称。悬浮在具体资源名上可查看稳定 ID、采集来源、最后发现时间和关键属性摘要。">
-                  资源
-                </Explain>
-                <Explain as="span" description="资源类别，用于区分 AI 工具、模型、配置文件、容器、运行框架、技能、MCP、端口或磁盘卷。">
-                  类型
-                </Explain>
-                <Explain as="span" description="资源当前状态，由对应 adapter 根据配置、进程、容器、端口或文件可读性综合判断。">
-                  状态
-                </Explain>
-                <Explain as="span" description="发现该资源的采集器。adapter 是隔离执行的只读采集单元，失败不会影响其他 adapter。">
-                  采集器
-                </Explain>
-              </div>
-              {snapshot.nodes.slice(0, 60).map((node) => (
-                <div className="row" key={node.id} onClick={() => openDetail(node.id)}>
-                  <Explain as="span" className="truncate" description={describeResource(node)}>
-                    {node.label}
-                  </Explain>
-                  <Explain as="span" description={RESOURCE_TYPE_INFO[node.type].description}>
-                    {RESOURCE_TYPE_INFO[node.type].label}
-                  </Explain>
-                  <Status value={node.state} kind="resource" />
-                  <Explain as="span" description={`该资源由 ${node.sourceAdapter} adapter 采集。adapter 负责读取对应系统边界的数据，并把结果统一转换为 Resource Graph 节点。点击行打开资源详情。`}>
-                    {node.sourceAdapter}
-                  </Explain>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="panel map-panel">
-            <div className="panel-head">
-              <h2>
-                <Explain description="轻量拓扑图用卡片展示资源图前部节点，帮助快速识别工具、配置、模型、运行时之间的大致分布。MVP 不依赖复杂拓扑布局。">
-                  AI 栈地图
-                </Explain>
-              </h2>
-              <span>轻量拓扑</span>
-            </div>
-            <div className="map">
-              {snapshot.nodes.slice(0, 18).map((node) => (
-                <div className={`map-node ${node.state}`} key={node.id}>
-                  <Explain as="strong" description={describeResource(node)}>
-                    {node.label}
-                  </Explain>
-                  <Explain as="small" description={RESOURCE_TYPE_INFO[node.type].description}>
-                    {RESOURCE_TYPE_INFO[node.type].label}
-                  </Explain>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="panel drift-panel">
-            <div className="panel-head">
-              <h2>
-                <Explain description="配置漂移展示 configured 与 live 状态不一致的高优先级记录。MVP 阶段重点识别已配置但未运行、运行态不可达或采集证据不一致的问题。">
-                  配置漂移
-                </Explain>
-              </h2>
-              <Explain as="span" description="当前突出展示的漂移记录数量。列表最多显示 8 条，优先用于首页排障。">
-                {driftPriority.length} 条重点
-              </Explain>
-            </div>
-            {driftPriority.length === 0 ? (
-              <p className="empty">最新快照没有发现配置漂移。</p>
-            ) : (
-              <div className="drift-list">
-                {driftPriority.map((record) => (
-                  <div className="drift" key={record.id}>
-                    <Explain as="strong" description={`${DRIFT_INFO[record.status].description} 严重度：${SEVERITY_INFO[record.severity].label}，${SEVERITY_INFO[record.severity].description}`}>
-                      {DRIFT_INFO[record.status].label}
-                    </Explain>
-                    <Explain as="span" description="发生漂移的资源稳定 ID，格式通常为 adapter:type:stable-key，可用于在资源表或日志中定位同一个对象。">
-                      {record.resourceId}
-                    </Explain>
-                    <Explain as="small" description={describeDrift(record)}>
-                      {record.evidence.join(" · ")}
-                    </Explain>
+                {/* Adapter Runs */}
+                <div className="panel adapter-panel">
+                  <div className="panel-head">
+                    <h2>
+                      <Explain description="采集器运行面板展示每个采集器本次执行结果。它用于确认数据新鲜度与隔离状态。">
+                        采集器运行
+                      </Explain>
+                    </h2>
+                    <span>隔离采集器 ({snapshot.adapterRuns.length})</span>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="panel adapter-panel">
-            <div className="panel-head">
-              <h2>
-                <Explain description="采集器运行面板展示每个采集器本次执行结果。它用于确认数据是否新鲜、是否有采集器失败、是否触发超时或陈旧数据回退。">
-                  采集器运行
-                </Explain>
-              </h2>
-              <span>隔离采集器</span>
-            </div>
-            <div className="adapter-list">
-              {snapshot.adapterRuns.map((run) => (
-                <div className="adapter-run" key={run.runId}>
-                  <Explain as="span" description={`adapterId=${run.adapterId}。采集器负责读取一个明确边界内的数据，并把失败隔离在本次运行记录中。`}>
-                    {run.adapterId}
-                  </Explain>
-                  <Status value={run.status} kind="adapter" />
-                  <Explain as="small" description={describeAdapterRun(run)}>
-                    {run.durationMs ?? 0}ms {run.stale ? "陈旧" : ""}
-                  </Explain>
-                  <CapabilityChips adapterId={run.adapterId} />
+                  <div className="adapter-list">
+                    {snapshot.adapterRuns.map((run) => (
+                      <div className="adapter-run" key={run.runId}>
+                        <Explain as="span" description={`adapterId=${run.adapterId}。采集器负责读取一个明确边界内的数据。`}>
+                          {run.adapterId}
+                        </Explain>
+                        <Status value={run.status} kind="adapter" />
+                        <Explain as="small" description={describeAdapterRun(run)}>
+                          {run.durationMs ?? 0}ms {run.stale ? "陈旧" : ""}
+                        </Explain>
+                        <CapabilityChips adapterId={run.adapterId} />
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              ))}
-            </div>
-          </div>
-        </section>
+              </div>
+            </section>
+
+            {/* Gateway & Telemetry */}
+            <section className="content-grid" style={{ gridTemplateColumns: "1.2fr 1fr" }}>
+              <GatewayPanel onMessage={notify} />
+              <div className="panel">
+                <div className="panel-head">
+                  <h2>运行遥测入口</h2>
+                  <span>/api/metrics/series</span>
+                </div>
+                <div style={{ padding: "16px 20px" }}>
+                  <p style={{ margin: "0 0 12px", color: "#94a3b8", fontSize: 13, lineHeight: 1.6 }}>
+                    Token / 内存时间序列已接入。点击任一资源即可在详情抽屉中查看最近 1 小时遥测增量与历史 ActionRun 验证证据。
+                  </p>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
+                    <div style={{ background: "#0d1525", border: "1px solid #1e2a42", borderRadius: 8, padding: 12 }}>
+                      <div style={{ color: "#64748b", fontSize: 11, marginBottom: 4 }}>端点采样</div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: "#38bdf8" }}>{endpointNodes.length} 个端点</div>
+                    </div>
+                    <div style={{ background: "#0d1525", border: "1px solid #1e2a42", borderRadius: 8, padding: 12 }}>
+                      <div style={{ color: "#64748b", fontSize: 11, marginBottom: 4 }}>显存与进程</div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: "#34d399" }}>{totalMemoryMb} MB</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
           </>
         )}
 
         {view !== "运行总览" && view !== "配置中心" && view !== "审计日志" && (
-          <section className="content-grid">
+          <section className="content-grid" style={{ gridTemplateColumns: "1fr" }}>
             <ResourceListView view={view} nodes={snapshot.nodes} onOpen={openDetail} />
           </section>
         )}
 
         {view === "配置中心" && (
-          <section className="content-grid">
+          <section className="content-grid" style={{ gridTemplateColumns: "1fr" }}>
             <ConfigCenterPanel onMessage={notify} />
           </section>
         )}
 
         {view === "审计日志" && (
-          <section className="content-grid">
+          <section className="content-grid" style={{ gridTemplateColumns: "1fr" }}>
             <AuditPanel />
-          </section>
-        )}
-
-        {view === "运行总览" && (
-          <section className="content-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
-            <GatewayPanel onMessage={notify} />
-            <div className="panel">
-              <div className="panel-head">
-                <h2>运行指标</h2>
-                <span>遥测入口</span>
-              </div>
-              <p className="empty">
-                Token/内存时间序列已接入（/api/metrics/series）。资源详情视图展示每个资源的当前值与窗口增量。
-              </p>
-            </div>
           </section>
         )}
       </main>
 
+      {/* Resource Detail Drawer Overlay */}
       {detailId && <ResourceDetail resourceId={detailId} onClose={closeDetail} />}
-    </div>
-  );
-}
-
-function Metric({
-  metric,
-  value,
-  tone = "neutral"
-}: {
-  metric: keyof typeof METRIC_INFO;
-  value: number;
-  tone?: "neutral" | "ok" | "warn";
-}) {
-  const info = METRIC_INFO[metric];
-  return (
-    <div className={`metric ${tone}`}>
-      <Explain as="span" description={info.description}>
-        {info.label}
-      </Explain>
-      <strong>{value}</strong>
     </div>
   );
 }
@@ -634,8 +1188,8 @@ function Metric({
 function Status({ value, kind }: { value: ResourceState | AdapterRunStatus; kind: "resource" | "adapter" }) {
   const info = kind === "resource" ? RESOURCE_STATE_INFO[value as ResourceState] : ADAPTER_STATUS_INFO[value as AdapterRunStatus];
   return (
-    <Explain as="span" className={`status ${value}`} description={info.description}>
-      {info.label}
+    <Explain as="span" className={`status ${value}`} description={info?.description || String(value)}>
+      {info?.label || String(value)}
     </Explain>
   );
 }
@@ -737,7 +1291,7 @@ function CapabilityChips({ adapterId }: { adapterId: string }) {
           as="span"
           key={state.capability}
           className={`cap-chip ${state.status}`}
-          description={`${CAPABILITY_LABELS[state.capability]}：${CAPABILITY_STATUS_INFO[state.status].description}${state.reason ? `（${state.reason}）` : ""}`}
+          description={`${CAPABILITY_LABELS[state.capability]}：${CAPABILITY_STATUS_INFO[state.status]?.description || ""}${state.reason ? `（${state.reason}）` : ""}`}
         >
           {CAPABILITY_LABELS[state.capability]}
         </Explain>
@@ -751,9 +1305,9 @@ function describeResource(node: ResourceNode) {
   const state = RESOURCE_STATE_INFO[node.state];
   const properties = formatProperties(node.properties);
   return [
-    `${node.label} 是一个${type.label}资源。`,
-    type.description,
-    `当前状态：${state.label}。${state.description}`,
+    `${node.label} 是一个${type?.label || node.type}资源。`,
+    type?.description || "",
+    `当前状态：${state?.label || node.state}。${state?.description || ""}`,
     `稳定 ID：${node.id}。来源 adapter：${node.sourceAdapter}。最后发现时间：${formatDate(node.lastSeenAt)}。`,
     properties ? `关键属性：${properties}` : "当前节点没有可展示的额外属性。"
   ].join(" ");
@@ -761,8 +1315,8 @@ function describeResource(node: ResourceNode) {
 
 function describeDrift(record: DriftRecord) {
   return [
-    DRIFT_INFO[record.status].description,
-    `严重度：${SEVERITY_INFO[record.severity].label}。`,
+    DRIFT_INFO[record.status]?.description || record.status,
+    `严重度：${SEVERITY_INFO[record.severity]?.label || record.severity}。`,
     record.evidence.length ? `证据：${record.evidence.join("；")}。` : "当前记录没有附加证据。",
     `创建时间：${formatDate(record.createdAt)}。`
   ].join(" ");
@@ -771,7 +1325,7 @@ function describeDrift(record: DriftRecord) {
 function describeAdapterRun(run: SystemSnapshot["adapterRuns"][number]) {
   const status = ADAPTER_STATUS_INFO[run.status];
   return [
-    `本次运行状态：${status.label}。${status.description}`,
+    `本次运行状态：${status?.label || run.status}。${status?.description || ""}`,
     `耗时：${run.durationMs ?? 0}ms。`,
     run.finishedAt ? `完成时间：${formatDate(run.finishedAt)}。` : "尚未记录完成时间。",
     run.stale ? "该结果被标记为陈旧，表示当前数据可能来自最近一次成功快照。" : "该结果未标记为陈旧。",
@@ -782,9 +1336,7 @@ function describeAdapterRun(run: SystemSnapshot["adapterRuns"][number]) {
 function formatProperties(properties: Record<string, unknown>): string {
   const entries = Object.entries(properties).slice(0, 4);
   if (!entries.length) return "";
-  return entries
-    .map(([key, value]) => `${key}=${formatPropertyValue(value)}`)
-    .join("；");
+  return entries.map(([key, value]) => `${key}=${formatPropertyValue(value)}`).join("；");
 }
 
 function formatPropertyValue(value: unknown): string {

@@ -263,13 +263,41 @@ const VIEW_FILTERS: Record<string, ResourceNode["type"] | null> = {
 };
 
 export function ResourceListView({ view, nodes, onOpen }: { view: string; nodes: ResourceNode[]; onOpen: (id: string) => void }) {
+  const [filterQuery, setFilterQuery] = useState("");
   const typeFilter = VIEW_FILTERS[view];
-  const filtered = typeFilter ? nodes.filter((node) => node.type === typeFilter) : nodes;
+  const byType = typeFilter ? nodes.filter((node) => node.type === typeFilter) : nodes;
+  const filtered = filterQuery
+    ? byType.filter(
+        (n) =>
+          n.label.toLowerCase().includes(filterQuery.toLowerCase()) ||
+          n.id.toLowerCase().includes(filterQuery.toLowerCase()) ||
+          n.sourceAdapter.toLowerCase().includes(filterQuery.toLowerCase())
+      )
+    : byType;
+
   return (
     <div className="panel table-panel">
       <div className="panel-head">
         <h2>{view}</h2>
-        <span>{filtered.length} 个资源</span>
+        <span>{filtered.length} / {byType.length} 个资源</span>
+      </div>
+      <div className="table-panel-header">
+        <div className="search-box">
+          <span>🔍</span>
+          <input
+            placeholder={`在 ${view} 中搜索名称、ID、采集器...`}
+            value={filterQuery}
+            onChange={(e) => setFilterQuery(e.target.value)}
+          />
+          {filterQuery && (
+            <button
+              style={{ background: "transparent", border: 0, color: "#94a3b8", cursor: "pointer" }}
+              onClick={() => setFilterQuery("")}
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
       <div className="resource-table">
         <div className="row header">
