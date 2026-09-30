@@ -1,0 +1,28 @@
+services:
+  lms-aipanel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lms-aipanel
+    ports:
+      # 仅绑定宿主机 127.0.0.1 回环地址，保证安全性
+      - "127.0.0.1:3777:3777"
+    environment:
+      - LMS_AIPANEL_HOST=0.0.0.0
+      - LMS_AIPANEL_PORT=3777
+      - LMS_AIPANEL_DATA_DIR=/data
+    volumes:
+      # 1. 持久化存储 SQLite 数据库与备份
+      - lms-data:/data
+      # 2. 宿主机 Docker 守护进程（只读，供 Docker adapter 采集容器）
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # 3. 宿主机 AI 工具配置（可选挂载，供配置中心读取）
+      # - ${HOME}/.codex:/root/.codex
+      # - ${HOME}/.claude:/root/.claude
+    extra_hosts:
+      # 允许容器内部访问宿主机上的推理端口（如 Ollama、MLX Server）
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  lms-data:
