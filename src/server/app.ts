@@ -1190,8 +1190,16 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
   const clientDist = path.join(process.cwd(), "dist", "client");
   await app.register(import("@fastify/static"), {
     root: clientDist,
-    prefix: "/"
+    prefix: "/panel/"
   });
+  await app.register(import("@fastify/static"), {
+    root: clientDist,
+    prefix: "/",
+    decorateReply: false
+  });
+
+  app.get("/panel", async (_request, reply) => reply.sendFile("index.html"));
+  app.get("/panel/", async (_request, reply) => reply.sendFile("index.html"));
 
   app.setNotFoundHandler((request, reply) => {
     if (request.url.startsWith("/api/")) {
@@ -1203,6 +1211,10 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
           })
         )
       );
+      return;
+    }
+    if (request.url.startsWith("/panel/assets/") || request.url.startsWith("/assets/")) {
+      reply.code(404).send("Not found");
       return;
     }
     if (request.url.includes(".")) {

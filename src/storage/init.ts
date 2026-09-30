@@ -23,5 +23,24 @@ export async function ensureStorage(): Promise<InitializedStorage> {
 
   const db = openDatabase(paths.databasePath);
   const appliedMigrations = await applyMigrations(db, paths.migrationsDir);
+
+  // Upgrade legacy snapshots table if version column is missing from pre-v0.1 dev iterations
+  const snapshotCols = db.prepare("PRAGMA table_info(snapshots)").all() as Array<{ name: string }>;
+  const hasVersion = snapshotCols.some((col) => col.name === "version");
+  if (snapshotCols.length > 0 && !hasVersion) {
+    db.exec(`
+      DROP TABLE snapshots;
+      CREATE TABLE snapshots (
+        version INTEGER PRIMARY KEY,
+        host_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        nodes_json TEXT NOT NULL,
+        edges_json TEXT NOT NULL,
+        adapter_runs_json TEXT NOT NULL,
+        drift_json TEXT NOT NULL
+      );
+    `);
+  }
+
   return { db, paths, appliedMigrations };
 }
