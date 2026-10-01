@@ -19,11 +19,12 @@ import { ResourceDetail } from "./resourceDetail";
 import { buildOperations } from "./operations";
 import { API_BASE, apiFetch, ensureSession, readFetch } from "./api";
 import { AuditPanel, ConfigCenterPanel, GatewayPanel, ResourceListView } from "./views";
+import { EnvironmentPanel } from "./environmentView";
 import "./styles.css";
 
 const queryClient = new QueryClient();
 
-const NAV_ITEMS = ["运行总览", "AI 工具", "AI 助手", "本地模型", "运行框架", "技能", "MCP", "配置中心", "审计日志"];
+const NAV_ITEMS = ["运行总览", "本地环境", "AI 工具", "AI 助手", "本地模型", "运行框架", "技能", "MCP", "配置中心", "审计日志"];
 
 const METRIC_INFO = {
   resources: {
@@ -424,6 +425,15 @@ function App() {
           {collecting && <span className="refresh-progress">正在采集首个快照…</span>}
 
           <HostBadge info={hostInfo} />
+
+          <button
+            className="top-btn"
+            style={{ borderColor: "rgba(56, 189, 248, 0.4)", background: "rgba(6, 182, 212, 0.1)", color: "#38bdf8" }}
+            onClick={() => setView("本地环境")}
+            title="查看完整软硬件规格、VPN/网络代理、活跃端口与系统环境"
+          >
+            🖥️ 本地环境
+          </button>
 
           <Explain
             as="span"
@@ -1160,7 +1170,13 @@ function App() {
           </>
         )}
 
-        {view !== "运行总览" && view !== "配置中心" && view !== "审计日志" && (
+        {view === "本地环境" && (
+          <section className="content-grid" style={{ gridTemplateColumns: "1fr" }}>
+            <EnvironmentPanel />
+          </section>
+        )}
+
+        {view !== "运行总览" && view !== "本地环境" && view !== "配置中心" && view !== "审计日志" && (
           <section className="content-grid" style={{ gridTemplateColumns: "1fr" }}>
             <ResourceListView view={view} nodes={snapshot.nodes} onOpen={openDetail} />
           </section>

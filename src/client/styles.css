@@ -1651,6 +1651,40 @@ button {
   overflow-wrap: anywhere;
 }
 
+/* Environment View */
+.env-info-box {
+  background: #090e1a;
+  border: 1px solid #1e2a42;
+  border-radius: 8px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+
+.env-info-label {
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.env-info-val {
+  font-size: 14px;
+  color: #f8fafc;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-info-sub {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
 /* Responsive adjustments */
 @media (max-width: 1024px) {
   .stat-cards {

@@ -5,6 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AssistantAdapter } from "../src/adapters/assistantAdapter";
 import type { AdapterContext } from "../src/adapters/types";
 
+vi.mock("execa", () => ({
+  execa: vi.fn().mockResolvedValue({ stdout: "" })
+}));
+
 let tmpDir: string;
 
 beforeEach(async () => {

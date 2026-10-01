@@ -31,6 +31,7 @@ import { GatewayStore } from "../storage/gateway";
 import { AuditStore } from "../storage/audit";
 import { ConfigCenter } from "../domain/configCenter";
 import { ObservabilityGateway } from "../domain/gateway";
+import { collectSystemEnvironment } from "../domain/environment";
 import { closeDatabase } from "../storage/db";
 
 export interface AppOptions {
@@ -241,6 +242,13 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
       })
     )
   );
+
+  /** Returns system hardware, network/VPN, active ports, storage, and toolchain info */
+  app.get("/api/environment", async (request) => {
+    const fresh = Boolean((request.query as { fresh?: string } | undefined)?.fresh);
+    const report = await collectSystemEnvironment(fresh);
+    return envelope(ok(report));
+  });
 
   // ---- Local write session + Origin Guard (issue #16) ----
 
