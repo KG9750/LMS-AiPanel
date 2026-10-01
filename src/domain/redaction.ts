@@ -36,6 +36,8 @@ export function sensitiveKeyTokens(key: string): string[] {
 }
 
 export function isSensitiveKey(key: string): boolean {
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (NON_SENSITIVE_METADATA_KEYS.has(normalized)) return false;
   const tokens = sensitiveKeyTokens(key);
   return tokens.some((token) => SENSITIVE_TERMS.has(token));
 }
@@ -46,13 +48,22 @@ export function redactSecretString(value: string): string {
     .replace(URL_CREDENTIAL_PATTERN, "$1<redacted>@");
 }
 
-/** Numeric metrics counters that must survive redaction (gateway report). */
+/** Numeric metrics counters that must survive redaction (gateway report, token analytics). */
 const NUMERIC_METRIC_KEYS = new Set([
   "tokensin",
   "tokensout",
+  "totaltokens",
+  "inputtokens",
+  "outputtokens",
+  "cachetokens",
+  "cachereadinputtokens",
+  "cachecreationinputtokens",
+  "thinkingtokens",
+  "tokens",
   "latencyms",
   "count",
   "requests",
+  "requestscount",
   "errors",
   "modelcount",
   "processmemorykb",
@@ -60,6 +71,14 @@ const NUMERIC_METRIC_KEYS = new Set([
   "sizebytes",
   "rsskb",
   "durationms"
+]);
+
+/** Safe metadata keys that contain 'auth' but are non-secret enums or statuses. */
+const NON_SENSITIVE_METADATA_KEYS = new Set([
+  "authstatus",
+  "authtype",
+  "authmode",
+  "loginstatus"
 ]);
 
 /**
@@ -98,7 +117,9 @@ export function redactValue(value: unknown): unknown {
             ? nested
             : typeof nested === "boolean" && isMetricCounter(key)
               ? nested
-              : "<redacted>";
+              : typeof nested === "object" && nested !== null && isMetricCounter(key)
+                ? redactValue(nested)
+                : "<redacted>";
       } else {
         result[key] = redactValue(nested);
       }

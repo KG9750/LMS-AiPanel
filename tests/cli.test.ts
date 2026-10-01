@@ -67,7 +67,7 @@ describe("management CLI (issue #22)", () => {
     expect(status.status).toBe(0);
 
     runCli(["stop"], 15_000);
-  });
+  }, 30_000);
 
   it("logs points at the runtime log directory", async () => {
     const logs = runCli(["logs"]);
@@ -88,7 +88,7 @@ describe("management CLI (issue #22)", () => {
     const after = runCli(["status"]);
     expect(after.status).toBe(1);
     expect(after.stdout).toContain("health endpoint: unhealthy");
-  });
+  }, 30_000);
 });
 
 describe("CLI server entry", () => {

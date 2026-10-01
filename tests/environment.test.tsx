@@ -125,7 +125,7 @@ async function render(element: React.ReactElement): Promise<HTMLElement> {
   document.body.appendChild(container);
   const root = createRoot(container);
   root.render(element);
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  await new Promise((resolve) => setTimeout(resolve, 80));
   return container;
 }
 

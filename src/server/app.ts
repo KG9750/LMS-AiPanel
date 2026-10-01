@@ -32,6 +32,9 @@ import { AuditStore } from "../storage/audit";
 import { ConfigCenter } from "../domain/configCenter";
 import { ObservabilityGateway } from "../domain/gateway";
 import { collectSystemEnvironment } from "../domain/environment";
+import { collectModelQuotas } from "../domain/modelQuotas";
+import { collectTopTokenProjects } from "../domain/tokenProjects";
+import { collectBotStatus } from "../domain/botMonitor";
 import { closeDatabase } from "../storage/db";
 
 export interface AppOptions {
@@ -247,6 +250,27 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
   app.get("/api/environment", async (request) => {
     const fresh = Boolean((request.query as { fresh?: string } | undefined)?.fresh);
     const report = await collectSystemEnvironment(fresh);
+    return envelope(ok(report));
+  });
+
+  /** Returns cloud models & local models quotas and port metrics */
+  app.get("/api/models/quotas", async (request) => {
+    const fresh = Boolean((request.query as { fresh?: string } | undefined)?.fresh);
+    const report = await collectModelQuotas(fresh);
+    return envelope(ok(report));
+  });
+
+  /** Returns top 10 projects by token usage with model breakdown */
+  app.get("/api/tokens/top-projects", async (request) => {
+    const fresh = Boolean((request.query as { fresh?: string } | undefined)?.fresh);
+    const report = await collectTopTokenProjects(fresh);
+    return envelope(ok(report));
+  });
+
+  /** Returns real-time status of all bots */
+  app.get("/api/bots/monitor", async (request) => {
+    const fresh = Boolean((request.query as { fresh?: string } | undefined)?.fresh);
+    const report = await collectBotStatus(fresh);
     return envelope(ok(report));
   });
 

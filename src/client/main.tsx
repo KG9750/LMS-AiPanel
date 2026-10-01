@@ -20,11 +20,28 @@ import { buildOperations } from "./operations";
 import { API_BASE, apiFetch, ensureSession, readFetch } from "./api";
 import { AuditPanel, ConfigCenterPanel, GatewayPanel, ResourceListView } from "./views";
 import { EnvironmentPanel } from "./environmentView";
+import { ModelQuotasPanel } from "./modelQuotasView";
+import { TokenProjectsPanel } from "./tokenProjectsView";
+import { BotMonitorPanel } from "./botMonitorView";
 import "./styles.css";
 
 const queryClient = new QueryClient();
 
-const NAV_ITEMS = ["运行总览", "本地环境", "AI 工具", "AI 助手", "本地模型", "运行框架", "技能", "MCP", "配置中心", "审计日志"];
+const NAV_ITEMS = [
+  "运行总览",
+  "模型资源",
+  "Token 排行",
+  "Bot 监控",
+  "本地环境",
+  "AI 工具",
+  "AI 助手",
+  "本地模型",
+  "运行框架",
+  "技能",
+  "MCP",
+  "配置中心",
+  "审计日志"
+];
 
 const METRIC_INFO = {
   resources: {
@@ -425,6 +442,33 @@ function App() {
           {collecting && <span className="refresh-progress">正在采集首个快照…</span>}
 
           <HostBadge info={hostInfo} />
+
+          <button
+            className="top-btn"
+            style={{ borderColor: "rgba(56, 189, 248, 0.4)", background: "rgba(6, 182, 212, 0.1)", color: "#38bdf8" }}
+            onClick={() => setView("模型资源")}
+            title="查看云端与本地大模型配额、周限量、5h限制与端口调用"
+          >
+            🌐 模型配额
+          </button>
+
+          <button
+            className="top-btn"
+            style={{ borderColor: "rgba(245, 158, 11, 0.4)", background: "rgba(245, 158, 11, 0.1)", color: "#fbbf24" }}
+            onClick={() => setView("Token 排行")}
+            title="查看 Token 消耗排名前 10 的项目及各模型来源细分"
+          >
+            📊 Token 排行
+          </button>
+
+          <button
+            className="top-btn"
+            style={{ borderColor: "rgba(168, 85, 247, 0.4)", background: "rgba(168, 85, 247, 0.1)", color: "#c084fc" }}
+            onClick={() => setView("Bot 监控")}
+            title="实时监控 Grok Bot, Muse, Dot, 飞书 Bot, 微信 Bot, Discord/TG 机器人"
+          >
+            🤖 Bot 监控
+          </button>
 
           <button
             className="top-btn"
@@ -1176,10 +1220,41 @@ function App() {
           </section>
         )}
 
-        {view !== "运行总览" && view !== "本地环境" && view !== "配置中心" && view !== "审计日志" && (
+        {view === "模型资源" && (
           <section className="content-grid" style={{ gridTemplateColumns: "1fr" }}>
-            <ResourceListView view={view} nodes={snapshot.nodes} onOpen={openDetail} />
+            <ModelQuotasPanel defaultTab="cloud" />
           </section>
+        )}
+
+        {view === "本地模型" && (
+          <section className="content-grid" style={{ gridTemplateColumns: "1fr" }}>
+            <ModelQuotasPanel defaultTab="local" />
+          </section>
+        )}
+
+        {view === "Token 排行" && (
+          <section className="content-grid" style={{ gridTemplateColumns: "1fr" }}>
+            <TokenProjectsPanel />
+          </section>
+        )}
+
+        {view === "Bot 监控" && (
+          <section className="content-grid" style={{ gridTemplateColumns: "1fr" }}>
+            <BotMonitorPanel />
+          </section>
+        )}
+
+        {view !== "运行总览" &&
+          view !== "本地环境" &&
+          view !== "模型资源" &&
+          view !== "本地模型" &&
+          view !== "Token 排行" &&
+          view !== "Bot 监控" &&
+          view !== "配置中心" &&
+          view !== "审计日志" && (
+            <section className="content-grid" style={{ gridTemplateColumns: "1fr" }}>
+              <ResourceListView view={view} nodes={snapshot.nodes} onOpen={openDetail} />
+            </section>
         )}
 
         {view === "配置中心" && (
