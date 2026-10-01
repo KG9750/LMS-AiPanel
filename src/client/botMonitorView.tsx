@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { BotMonitorReport, BotStatusItem } from "../domain/botMonitor";
 import { readFetch } from "./api";
@@ -17,22 +17,27 @@ export function BotMonitorPanel() {
   const runningCount = data?.runningCount ?? 0;
   const totalBots = data?.totalBots ?? 0;
 
-  const filteredBots = bots.filter((b) => {
-    const matchesPlatform =
-      platformFilter === "all" ||
-      (platformFilter === "running" && b.status === "running") ||
-      (platformFilter === "feishu_wechat" && (b.platform.includes("飞书") || b.platform.includes("微信"))) ||
-      (platformFilter === "chat_community" && (b.platform === "Discord" || b.platform === "Telegram")) ||
-      (platformFilter === "desktop_agents" && (b.platform === "xAI Grok" || b.platform === "Muse" || b.platform === "Dot AI" || b.platform.includes("Hermes")));
+  const filteredBots = useMemo(
+    () =>
+      bots.filter((b) => {
+        const matchesPlatform =
+          platformFilter === "all" ||
+          (platformFilter === "running" && b.status === "running") ||
+          (platformFilter === "feishu_wechat" && (b.platform.includes("飞书") || b.platform.includes("微信"))) ||
+          (platformFilter === "chat_community" && (b.platform === "Discord" || b.platform === "Telegram")) ||
+          (platformFilter === "desktop_agents" &&
+            (b.platform === "xAI Grok" || b.platform === "Muse" || b.platform === "Dot AI" || b.platform.includes("Hermes")));
 
-    const matchesSearch =
-      b.name.toLowerCase().includes(searchFilter.toLowerCase()) ||
-      b.displayName.toLowerCase().includes(searchFilter.toLowerCase()) ||
-      b.platform.toLowerCase().includes(searchFilter.toLowerCase()) ||
-      b.boundModel.toLowerCase().includes(searchFilter.toLowerCase());
+        const matchesSearch =
+          b.name.toLowerCase().includes(searchFilter.toLowerCase()) ||
+          b.displayName.toLowerCase().includes(searchFilter.toLowerCase()) ||
+          b.platform.toLowerCase().includes(searchFilter.toLowerCase()) ||
+          b.boundModel.toLowerCase().includes(searchFilter.toLowerCase());
 
-    return matchesPlatform && matchesSearch;
-  });
+        return matchesPlatform && matchesSearch;
+      }),
+    [bots, platformFilter, searchFilter]
+  );
 
   return (
     <div className="panel" style={{ padding: "20px 24px" }}>
@@ -235,7 +240,7 @@ function BotCard({ bot }: { bot: BotStatusItem }) {
       <div style={{ borderTop: "1px solid #131d2e", paddingTop: 8, fontSize: 11, color: "#64748b" }}>
         <div style={{ fontWeight: 600, color: "#475569", marginBottom: 3 }}>健康证据：</div>
         {bot.healthEvidence.slice(0, 2).map((ev, idx) => (
-          <div key={idx} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <div key={`${bot.id}-ev-${idx}`} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             • {ev}
           </div>
         ))}

@@ -94,8 +94,14 @@ export async function collectBotStatus(forceFresh = false): Promise<BotMonitorRe
     return dockerOut.toLowerCase().includes(name.toLowerCase()) && dockerOut.toLowerCase().includes("up");
   };
 
+  // Run app checks concurrently
+  const [grokAppExists, museAppExists, dotAppExists] = await Promise.all([
+    checkAppExists("Grok Bot.app"),
+    checkAppExists("Muse.app"),
+    checkAppExists("Dot.app")
+  ]);
+
   // 1. Grok Bot
-  const grokAppExists = await checkAppExists("Grok Bot.app");
   const grokPidMatch = psOut.match(/(\d+)\s+.*Grok Bot/);
   const grokPid = grokPidMatch ? Number(grokPidMatch[1]) : undefined;
   const grokRunning = Boolean(grokPid);
@@ -121,7 +127,6 @@ export async function collectBotStatus(forceFresh = false): Promise<BotMonitorRe
   });
 
   // 2. Muse AI Bot
-  const museAppExists = await checkAppExists("Muse.app");
   const musePidMatch = psOut.match(/(\d+)\s+.*Muse\.app/);
   const musePid = musePidMatch ? Number(musePidMatch[1]) : undefined;
   const museRunning = Boolean(musePid);
@@ -146,7 +151,6 @@ export async function collectBotStatus(forceFresh = false): Promise<BotMonitorRe
   });
 
   // 3. Dot AI
-  const dotAppExists = await checkAppExists("Dot.app");
   const dotPidMatch = psOut.match(/(\d+)\s+.*[Dd]ot/);
   const dotPid = dotPidMatch ? Number(dotPidMatch[1]) : undefined;
   const dotEnvService = launchctlOut.includes("com.leo.dotnet-gui-environment");

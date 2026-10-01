@@ -293,7 +293,9 @@ export async function collectSystemEnvironment(forceFresh = false): Promise<Syst
   const envProxies: Record<string, string> = {};
   for (const key of ["http_proxy", "https_proxy", "all_proxy", "no_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"]) {
     if (process.env[key]) {
-      envProxies[key] = process.env[key]!;
+      const rawVal = process.env[key]!;
+      // Redact passwords in user:pass@host proxy URL format
+      envProxies[key] = rawVal.replace(/^(https?:\/\/|socks5?:\/\/)([^:@\s]+):([^@\s]+)@/i, "$1$2:*****@");
     }
   }
 

@@ -144,23 +144,44 @@ function isRedactedLine(line: string): boolean {
 
 /**
  * Replaces redacted values in the editor draft with the original values from
- * the server-held file (N1). Lines are matched positionally by key; a line
- * whose value was redacted takes the original file's value verbatim.
+ * the server-held file (N1). Lines are matched positionally by key, scoped by
+ * section to prevent collisions across multiple sections in TOML.
  */
 function backfillRedactedLines(updated: string, original: string): string {
   const updatedLines = updated.split("\n");
   const originalByKey = new Map<string, string>();
+  let currentSection = "";
   for (const line of original.split("\n")) {
+    const secMatch = line.match(/^\s*\[([^\]]+)\]/);
+    if (secMatch) {
+      currentSection = secMatch[1].trim();
+      continue;
+    }
     const match = line.match(/^\s*([A-Za-z0-9_.-]+)\s*=/);
-    if (match) originalByKey.set(match[1], line);
+    if (match) {
+      const key = match[1];
+      const scopedKey = currentSection ? `${currentSection}.${key}` : key;
+      originalByKey.set(scopedKey, line);
+      if (!originalByKey.has(key)) {
+        originalByKey.set(key, line);
+      }
+    }
   }
+
+  let updateSection = "";
   return updatedLines
     .map((line) => {
+      const secMatch = line.match(/^\s*\[([^\]]+)\]/);
+      if (secMatch) {
+        updateSection = secMatch[1].trim();
+        return line;
+      }
       if (!isRedactedLine(line)) return line;
       const match = line.match(/^(\s*)([A-Za-z0-9_.-]+)(\s*=\s*)(.*)$/);
       if (!match) return line;
       const [, indent, key, eq] = match;
-      const originalLine = originalByKey.get(key);
+      const scopedKey = updateSection ? `${updateSection}.${key}` : key;
+      const originalLine = originalByKey.get(scopedKey) ?? originalByKey.get(key);
       if (originalLine === undefined) return line;
       // Preserve the editor's indentation/eq, restore the original value.
       const originalValue = originalLine.slice(originalLine.indexOf("=") + 1).trimStart();
@@ -411,10 +432,10 @@ export class ConfigCenter {
       createdAt: row.created_at
     };
     // O_NOFOLLOW: refuse to open (and thus write) through a symlink — a
-    // symlink swap cannot redirect the restore to an arbitrary file (N2).
     let handle: fs.FileHandle;
     try {
-      handle = await fs.open(record.filePath, fs.constants.O_WRONLY | fs.constants.O_TRUNC | 0o400000);
+      const nofollowFlag = fs.constants.O_NOFOLLOW ?? 0o400000;
+      handle = await fs.open(record.filePath, fs.constants.O_WRONLY | fs.constants.O_TRUNC | nofollowFlag);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.includes("ELOOP")) {

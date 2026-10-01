@@ -491,8 +491,14 @@ export async function collectModelQuotas(forceFresh = false): Promise<ModelQuota
     { port: 11434, defaultModel: "ollama-service", family: "Ollama", framework: "Ollama" as const, ctx: 32768, ram: 4100 }
   ];
 
-  for (const item of candidatePorts) {
-    const probe = await probeModelsEndpoint(item.port);
+  const probedResults = await Promise.all(
+    candidatePorts.map(async (item) => {
+      const probe = await probeModelsEndpoint(item.port);
+      return { item, probe };
+    })
+  );
+
+  for (const { item, probe } of probedResults) {
     const isListening = probe !== null;
     const modelName = probe?.modelId || item.defaultModel;
     const contextLength = probe?.contextLength || item.ctx;

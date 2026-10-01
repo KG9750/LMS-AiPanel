@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
 import { nanoid } from "nanoid";
@@ -1227,7 +1229,20 @@ export async function buildApp(options: AppOptions = {}): Promise<BuiltApp> {
 
   app.get("/api/audit", async () => envelope(ok(auditStore.list(100))));
 
-  const clientDist = path.join(process.cwd(), "dist", "client");
+  // Robust client static directory resolution (works regardless of launch cwd)
+  let clientDist = path.join(process.cwd(), "dist", "client");
+  try {
+    const currentDir = path.dirname(fileURLToPath(import.meta.url));
+    const distCandidate = path.resolve(currentDir, "../../dist/client");
+    const siblingCandidate = path.resolve(currentDir, "../client");
+    if (fsSync.existsSync(distCandidate)) {
+      clientDist = distCandidate;
+    } else if (fsSync.existsSync(siblingCandidate)) {
+      clientDist = siblingCandidate;
+    }
+  } catch {
+    // fallback to process.cwd
+  }
   await app.register(import("@fastify/static"), {
     root: clientDist,
     prefix: "/panel/"

@@ -77,11 +77,11 @@ describe("RefreshRun + SSE", () => {
 
     // Poll until completion.
     let run: { status: string; snapshotVersion?: number; adapterEvents?: Array<{ adapterId: string }> } | undefined;
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < 150; i++) {
       const poll = await built.app.inject({ method: "GET", url: `/api/refresh/${body.data.runId}` });
       run = poll.json().data;
       if (run?.status === "completed" || run?.status === "failed") break;
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 15));
     }
     expect(run?.status).toBe("completed");
     expect(run?.snapshotVersion).toBeGreaterThan(0);

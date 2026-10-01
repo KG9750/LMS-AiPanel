@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { TokenProjectItem, TopTokenProjectsReport } from "../domain/tokenProjects";
 import { readFetch } from "./api";
@@ -32,14 +32,18 @@ export function TokenProjectsPanel() {
   });
 
   const projects = data?.topProjects ?? [];
-  const filtered = filterQuery
-    ? projects.filter(
-        (p) =>
-          p.name.toLowerCase().includes(filterQuery.toLowerCase()) ||
-          p.path.toLowerCase().includes(filterQuery.toLowerCase()) ||
-          p.models.some((m) => m.displayName.toLowerCase().includes(filterQuery.toLowerCase()))
-      )
-    : projects;
+  const filtered = useMemo(
+    () =>
+      filterQuery
+        ? projects.filter(
+            (p) =>
+              p.name.toLowerCase().includes(filterQuery.toLowerCase()) ||
+              p.path.toLowerCase().includes(filterQuery.toLowerCase()) ||
+              p.models.some((m) => m.displayName.toLowerCase().includes(filterQuery.toLowerCase()))
+          )
+        : projects,
+    [projects, filterQuery]
+  );
 
   const totalTokens = data?.totalTrackedTokens ?? 0;
   const totalCost = data?.totalTrackedCostUSD ?? 0;

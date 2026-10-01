@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { CloudModelInfo, LocalModelInfo, ModelQuotasReport } from "../domain/modelQuotas";
 import { readFetch } from "./api";
@@ -16,18 +16,26 @@ export function ModelQuotasPanel({ defaultTab = "cloud" }: { defaultTab?: "cloud
   const cloudModels = data?.cloudModels ?? [];
   const localModels = data?.localModels ?? [];
 
-  const filteredCloud = cloudModels.filter(
-    (m) =>
-      m.name.toLowerCase().includes(searchFilter.toLowerCase()) ||
-      m.provider.toLowerCase().includes(searchFilter.toLowerCase()) ||
-      m.modelName.toLowerCase().includes(searchFilter.toLowerCase())
+  const filteredCloud = useMemo(
+    () =>
+      cloudModels.filter(
+        (m) =>
+          m.name.toLowerCase().includes(searchFilter.toLowerCase()) ||
+          m.provider.toLowerCase().includes(searchFilter.toLowerCase()) ||
+          m.modelName.toLowerCase().includes(searchFilter.toLowerCase())
+      ),
+    [cloudModels, searchFilter]
   );
 
-  const filteredLocal = localModels.filter(
-    (m) =>
-      m.name.toLowerCase().includes(searchFilter.toLowerCase()) ||
-      m.family.toLowerCase().includes(searchFilter.toLowerCase()) ||
-      String(m.port).includes(searchFilter)
+  const filteredLocal = useMemo(
+    () =>
+      localModels.filter(
+        (m) =>
+          m.name.toLowerCase().includes(searchFilter.toLowerCase()) ||
+          m.family.toLowerCase().includes(searchFilter.toLowerCase()) ||
+          String(m.port).includes(searchFilter)
+      ),
+    [localModels, searchFilter]
   );
 
   return (
@@ -213,7 +221,14 @@ function CloudModelCard({ model }: { model: CloudModelInfo }) {
             <span style={{ color: "#94a3b8", fontWeight: 600 }}>📅 周限量配额 (Weekly Quota)</span>
             <span style={{ color: "#f8fafc", fontWeight: 700 }}>{model.weeklyLimit.percentage}%</span>
           </div>
-          <div style={{ height: 7, background: "#1b273d", borderRadius: 4, overflow: "hidden", marginBottom: 6 }}>
+          <div
+            role="progressbar"
+            aria-valuenow={model.weeklyLimit.percentage}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`${model.name} 周限量配额`}
+            style={{ height: 7, background: "#1b273d", borderRadius: 4, overflow: "hidden", marginBottom: 6 }}
+          >
             <div
               style={{
                 width: `${model.weeklyLimit.percentage}%`,
@@ -235,7 +250,14 @@ function CloudModelCard({ model }: { model: CloudModelInfo }) {
             <span style={{ color: "#94a3b8", fontWeight: 600 }}>⏳ 5小时滚动限制 (5-Hour Window)</span>
             <span style={{ color: "#34d399", fontWeight: 700 }}>剩余重置：{model.fiveHourLimit.resetCountdown}</span>
           </div>
-          <div style={{ height: 7, background: "#1b273d", borderRadius: 4, overflow: "hidden", marginBottom: 6 }}>
+          <div
+            role="progressbar"
+            aria-valuenow={model.fiveHourLimit.percentage}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`${model.name} 5小时滚动限制`}
+            style={{ height: 7, background: "#1b273d", borderRadius: 4, overflow: "hidden", marginBottom: 6 }}
+          >
             <div
               style={{
                 width: `${model.fiveHourLimit.percentage}%`,
