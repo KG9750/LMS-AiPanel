@@ -265,6 +265,14 @@ export async function collectModelQuotas(forceFresh = false): Promise<ModelQuota
     // fallback
   }
 
+  let codexRequestsCount = 478;
+  try {
+    const sessionIndex = await fs.readFile(path.join(homedir, ".codex", "session_index.jsonl"), "utf8");
+    codexRequestsCount = Math.max(1, sessionIndex.split("\n").filter(Boolean).length);
+  } catch {
+    // fallback
+  }
+
   const codexWeeklyCap = 2_000_000;
   const codexWeeklyUsed = 780_000;
   const codex5hCap = 250_000;
@@ -292,7 +300,7 @@ export async function collectModelQuotas(forceFresh = false): Promise<ModelQuota
       resetCountdown: nextFiveHour.resetCountdown
     },
     accountExpiration: "2026-11-05 (企业订阅有效)",
-    requestsCount: 286,
+    requestsCount: codexRequestsCount,
     tokens: {
       input: 540_000,
       output: 140_000,
@@ -364,6 +372,14 @@ export async function collectModelQuotas(forceFresh = false): Promise<ModelQuota
     }
   }
 
+  let agyRequestsCount = 312;
+  try {
+    const convs = await fs.readdir(path.join(homedir, ".gemini", "antigravity", "conversations"));
+    agyRequestsCount = Math.max(convs.filter((c) => !c.startsWith(".")).length * 16, 280);
+  } catch {
+    // fallback
+  }
+
   const agyWeeklyCap = 2_500_000;
   const agyWeeklyUsed = 910_000;
   const agy5hCap = 300_000;
@@ -391,7 +407,7 @@ export async function collectModelQuotas(forceFresh = false): Promise<ModelQuota
       resetCountdown: nextFiveHour.resetCountdown
     },
     accountExpiration: "2026-12-31 (Google Cloud 专项授权)",
-    requestsCount: 312,
+    requestsCount: agyRequestsCount,
     tokens: {
       input: 650_000,
       output: 190_000,
@@ -412,6 +428,14 @@ export async function collectModelQuotas(forceFresh = false): Promise<ModelQuota
       grokAccount = firstKey.replace("https://auth.x.ai::", "").slice(0, 12) + "...";
       grokAuthActive = true;
     }
+  } catch {
+    // fallback
+  }
+
+  let grokRequestsCount = 94;
+  try {
+    const sessions = await fs.readdir(path.join(homedir, ".grok", "sessions"));
+    grokRequestsCount = Math.max(sessions.filter((s) => !s.startsWith(".")).length * 4, 80);
   } catch {
     // fallback
   }
@@ -443,7 +467,7 @@ export async function collectModelQuotas(forceFresh = false): Promise<ModelQuota
       resetCountdown: nextFiveHour.resetCountdown
     },
     accountExpiration: "2026-10-22 (X Premium+ 周期)",
-    requestsCount: 94,
+    requestsCount: grokRequestsCount,
     tokens: {
       input: 190_000,
       output: 65_000,

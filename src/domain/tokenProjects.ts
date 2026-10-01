@@ -53,6 +53,30 @@ function formatProjectName(rawPath: string): string {
   return parts.pop() || rawPath;
 }
 
+function formatLastActive(raw: any): string {
+  if (typeof raw === "number" && raw > 1000000000000) {
+    const d = new Date(raw);
+    if (!isNaN(d.getTime())) {
+      return (
+        d.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" }) +
+        " " +
+        d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+      );
+    }
+  }
+  if (typeof raw === "string" && raw.length > 8 && raw !== "true" && raw !== "false") {
+    const d = new Date(raw);
+    if (!isNaN(d.getTime())) {
+      return (
+        d.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" }) +
+        " " +
+        d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+      );
+    }
+  }
+  return "近期活跃";
+}
+
 export async function collectTopTokenProjects(forceFresh = false): Promise<TopTokenProjectsReport> {
   const now = Date.now();
   if (!forceFresh && cachedProjectsReport && now - lastCollectedAt < 5000) {
@@ -92,7 +116,7 @@ export async function collectTopTokenProjects(forceFresh = false): Promise<TopTo
     let projOut = Number((projData as any).lastTotalOutputTokens ?? 0);
     let projCache = Number((projData as any).lastTotalCacheReadInputTokens ?? 0) + Number((projData as any).lastTotalCacheCreationInputTokens ?? 0);
     let projCost = Number((projData as any).lastCost ?? 0);
-    const lastActive = String((projData as any).lastSessionModified ?? (projData as any).lastGracefulShutdown ?? "近期");
+    const lastActive = formatLastActive((projData as any).lastSessionModified || (projData as any).lastStartTime);
 
     const modelUsageMap: Record<string, { in: number; out: number; cache: number; cost: number }> = {};
 
